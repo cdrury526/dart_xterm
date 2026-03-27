@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/painting.dart';
 
+import 'package:dart_xterm/src/ui/box_drawing.dart';
 import 'package:dart_xterm/src/ui/palette_builder.dart';
 import 'package:dart_xterm/src/ui/paragraph_cache.dart';
 import 'package:dart_xterm/dart_xterm.dart';
@@ -174,47 +175,69 @@ class TerminalPainter {
     final charCode = cellData.content & CellContent.codepointMask;
     if (charCode == 0) return;
 
-    final cacheKey = cellData.getHash() ^ _textScaler.hashCode;
-    var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
-
-    if (paragraph == null) {
+    // Custom-render box-drawing and block element characters using Canvas
+    // primitives instead of font glyphs for pixel-perfect rendering.
+    if (isBoxDrawingChar(charCode)) {
       final cellFlags = cellData.flags;
-
       var color = cellFlags & CellFlags.inverse == 0
           ? resolveForegroundColor(cellData.foreground)
           : resolveBackgroundColor(cellData.background);
-
-      if (cellData.flags & CellFlags.faint != 0) {
+      if (cellFlags & CellFlags.faint != 0) {
         color = color.withValues(alpha: 0.5);
       }
-
-      final style = _textStyle.toTextStyle(
-        color: color,
-        bold: cellFlags & CellFlags.bold != 0,
-        italic: cellFlags & CellFlags.italic != 0,
-        underline: cellFlags & CellFlags.underline != 0,
-      );
-
-      // Flutter does not draw an underline below a space which is not between
-      // other regular characters. As only single characters are drawn, this
-      // will never produce an underline below a space in the terminal. As a
-      // workaround the regular space CodePoint 0x20 is replaced with
-      // the CodePoint 0xA0. This is a non breaking space and a underline can be
-      // drawn below it.
-      var char = String.fromCharCode(charCode);
-      if (cellFlags & CellFlags.underline != 0 && charCode == 0x20) {
-        char = String.fromCharCode(0xA0);
-      }
-
-      paragraph = _paragraphCache.performAndCacheLayout(
-        char,
-        style,
-        _textScaler,
-        cacheKey,
-      );
+      drawBoxDrawingChar(canvas, offset, _cellSize, charCode, color);
+      return;
     }
 
-    canvas.drawParagraph(paragraph, offset);
+    final cellFlags = cellData.flags;
+
+    var color = cellFlags & CellFlags.inverse == 0
+        ? resolveForegroundColor(cellData.foreground)
+        : resolveBackgroundColor(cellData.background);
+
+    if (cellFlags & CellFlags.faint != 0) {
+      color = color.withValues(alpha: 0.5);
+    }
+
+    // Draw text glyph (skip for plain spaces — underline is drawn separately)
+    if (charCode != 0x20) {
+      final cacheKey = cellData.getHash() ^ _textScaler.hashCode;
+      var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
+
+      if (paragraph == null) {
+        final style = _textStyle.toTextStyle(
+          color: color,
+          bold: cellFlags & CellFlags.bold != 0,
+          italic: cellFlags & CellFlags.italic != 0,
+          underline: false, // drawn separately via Canvas
+        );
+
+        paragraph = _paragraphCache.performAndCacheLayout(
+          String.fromCharCode(charCode),
+          style,
+          _textScaler,
+          cacheKey,
+        );
+      }
+
+      canvas.drawParagraph(paragraph, offset);
+    }
+
+    // Draw underline decoration via Canvas for pixel-perfect control.
+    // This replaces Flutter's TextDecoration.underline which renders
+    // inconsistently for spaces and can't match xterm.js/iTerm2 styling.
+    if (cellFlags & CellFlags.underline != 0) {
+      final y = (offset.dy + _cellSize.height - 1).roundToDouble();
+      final paint = Paint()
+        ..color = color
+        ..strokeWidth = 1.0
+        ..style = PaintingStyle.stroke;
+      canvas.drawLine(
+        Offset(offset.dx, y),
+        Offset(offset.dx + _cellSize.width, y),
+        paint,
+      );
+    }
   }
 
   /// Paints the background of a cell represented by [cellData] to [canvas] at

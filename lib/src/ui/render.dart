@@ -401,6 +401,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   void _paint(PaintingContext context, Offset offset) {
     final canvas = context.canvas;
 
+    // Fill the entire terminal area with the background color first.
+    // Without this, cells with the default background (CellColor.normal)
+    // are never painted, causing previous frame content to show through.
+    canvas.drawRect(
+      offset & size,
+      Paint()..color = _painter.theme.background,
+    );
+
+    // Clip all rendering to the terminal viewport area. Without this,
+    // buffer lines that have content beyond the current viewport width
+    // (e.g., from a previous wider layout) paint stray characters outside
+    // the visible terminal area.
+    canvas.save();
+    canvas.clipRect(offset & size);
+
     final lines = _terminal.buffer.lines;
     final charHeight = _painter.cellSize.height;
 
@@ -454,6 +469,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         offset,
       );
     }
+
+    canvas.restore();
   }
 
   /// Paints the text that is currently being composed in IME to [canvas] at

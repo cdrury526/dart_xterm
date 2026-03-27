@@ -592,4 +592,9 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   void unknownOSC(String code, List<String> args) {
     onCommand('unknownOSC($code, $args)', error: true);
   }
+
+  @override
+  void setHyperlink(bool active) {
+    onCommand('setHyperlink($active)');
+  }
 }

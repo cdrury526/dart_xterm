@@ -118,9 +118,12 @@ class BufferLine with IndexedItem {
 
   void eraseCell(int index, CursorStyle style) {
     final offset = index * _cellSize;
-    _data[offset + _cellForeground] = style.foreground;
+    // Per xterm.js behavior (Back Color Erase): erased cells preserve only
+    // the background color. All SGR flags (underline, bold, italic, etc.)
+    // and foreground color are zeroed out.
+    _data[offset + _cellForeground] = 0;
     _data[offset + _cellBackground] = style.background;
-    _data[offset + _cellAttributes] = style.attrs;
+    _data[offset + _cellAttributes] = 0;
     _data[offset + _cellContent] = 0;
   }
 

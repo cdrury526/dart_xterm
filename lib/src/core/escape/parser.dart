@@ -233,6 +233,7 @@ class EscapeParser {
     }
 
     _csi.params.clear();
+    _csi.subParams.clear();
 
     // test whether the csi is a `CSI ? Ps ...` or `CSI Ps ...`
     final prefix = _queue.peek();
@@ -245,6 +246,11 @@ class EscapeParser {
 
     var param = 0;
     var hasParam = false;
+    // Track colon-separated sub-parameters for the current param.
+    var inSubParam = false;
+    var subParam = 0;
+    List<int>? currentSubParams;
+
     while (true) {
       // The sequence isn't completed, just ignore it.
       if (_queue.isEmpty) {
@@ -254,17 +260,54 @@ class EscapeParser {
       final char = _queue.consume();
 
       if (char == Ascii.semicolon) {
+        if (inSubParam && currentSubParams != null) {
+          currentSubParams.add(subParam);
+          // Index at length-1 because the main param was already added
+          // when the first colon was encountered.
+          _csi.subParams[_csi.params.length - 1] = currentSubParams;
+          inSubParam = false;
+          currentSubParams = null;
+        }
         if (hasParam) {
           _csi.params.add(param);
         }
         param = 0;
+        hasParam = false;
+        subParam = 0;
+        continue;
+      }
+
+      // Colon separates sub-parameters (e.g., CSI 4:3m for curly underline,
+      // CSI 38:2:R:G:Bm for RGB colors). Save the main param and start
+      // accumulating sub-parameters.
+      if (char == Ascii.colon) {
+        if (!inSubParam) {
+          // First colon — save the main param, start sub-param collection
+          if (hasParam) {
+            _csi.params.add(param);
+          }
+          param = 0;
+          hasParam = false;
+          inSubParam = true;
+          currentSubParams = [];
+          subParam = 0;
+        } else {
+          // Additional colon — save current sub-param, start next
+          currentSubParams!.add(subParam);
+          subParam = 0;
+        }
         continue;
       }
 
       if (char >= Ascii.num0 && char <= Ascii.num9) {
         hasParam = true;
-        param *= 10;
-        param += char - Ascii.num0;
+        if (inSubParam) {
+          subParam *= 10;
+          subParam += char - Ascii.num0;
+        } else {
+          param *= 10;
+          param += char - Ascii.num0;
+        }
         continue;
       }
 
@@ -274,6 +317,12 @@ class EscapeParser {
       }
 
       if (char >= Ascii.atSign && char <= Ascii.tilde) {
+        if (inSubParam && currentSubParams != null) {
+          currentSubParams.add(subParam);
+          // Index at length-1 because the main param was already added
+          // when the first colon was encountered.
+          _csi.subParams[_csi.params.length - 1] = currentSubParams;
+        }
         if (hasParam) {
           _csi.params.add(param);
         }
@@ -449,7 +498,16 @@ class EscapeParser {
           handler.setCursorItalic();
           continue;
         case 4:
-          handler.setCursorUnderline();
+          final subParams4 = _csi.subParams[i];
+          if (subParams4 != null && subParams4.isNotEmpty) {
+            if (subParams4[0] == 0) {
+              handler.unsetCursorUnderline();
+            } else {
+              handler.setCursorUnderline();
+            }
+          } else {
+            handler.setCursorUnderline();
+          }
           continue;
         case 5:
           handler.setCursorBlink();
@@ -514,20 +572,36 @@ class EscapeParser {
           handler.setForegroundColor16(NamedColor.white);
           continue;
         case 38:
-          final mode = params[i + 1];
-          switch (mode) {
-            case 2:
-              final r = params[i + 2];
-              final g = params[i + 3];
-              final b = params[i + 4];
-              handler.setForegroundColorRgb(r, g, b);
-              i += 4;
-              break;
-            case 5:
-              final index = params[i + 2];
-              handler.setForegroundColor256(index);
-              i += 2;
-              break;
+          // Handle colon-separated sub-params: 38:2:R:G:B or 38:5:N
+          final subs38 = _csi.subParams[i];
+          if (subs38 != null && subs38.isNotEmpty) {
+            final mode = subs38[0];
+            if (mode == 2 && subs38.length >= 4) {
+              handler.setForegroundColorRgb(subs38[1], subs38[2], subs38[3]);
+            } else if (mode == 5 && subs38.length >= 2) {
+              handler.setForegroundColor256(subs38[1]);
+            }
+          } else if (i + 1 < params.length) {
+            // Semicolon-separated: 38;2;R;G;B or 38;5;N
+            final mode = params[i + 1];
+            switch (mode) {
+              case 2:
+                if (i + 4 < params.length) {
+                  final r = params[i + 2];
+                  final g = params[i + 3];
+                  final b = params[i + 4];
+                  handler.setForegroundColorRgb(r, g, b);
+                  i += 4;
+                }
+                break;
+              case 5:
+                if (i + 2 < params.length) {
+                  final index = params[i + 2];
+                  handler.setForegroundColor256(index);
+                  i += 2;
+                }
+                break;
+            }
           }
           continue;
         case 39:
@@ -559,20 +633,35 @@ class EscapeParser {
           handler.setBackgroundColor16(NamedColor.white);
           continue;
         case 48:
-          final mode = params[i + 1];
-          switch (mode) {
-            case 2:
-              final r = params[i + 2];
-              final g = params[i + 3];
-              final b = params[i + 4];
-              handler.setBackgroundColorRgb(r, g, b);
-              i += 4;
-              break;
-            case 5:
-              final index = params[i + 2];
-              handler.setBackgroundColor256(index);
-              i += 2;
-              break;
+          // Handle colon-separated sub-params: 48:2:R:G:B or 48:5:N
+          final subs48 = _csi.subParams[i];
+          if (subs48 != null && subs48.isNotEmpty) {
+            final mode = subs48[0];
+            if (mode == 2 && subs48.length >= 4) {
+              handler.setBackgroundColorRgb(subs48[1], subs48[2], subs48[3]);
+            } else if (mode == 5 && subs48.length >= 2) {
+              handler.setBackgroundColor256(subs48[1]);
+            }
+          } else if (i + 1 < params.length) {
+            final mode = params[i + 1];
+            switch (mode) {
+              case 2:
+                if (i + 4 < params.length) {
+                  final r = params[i + 2];
+                  final g = params[i + 3];
+                  final b = params[i + 4];
+                  handler.setBackgroundColorRgb(r, g, b);
+                  i += 4;
+                }
+                break;
+              case 5:
+                if (i + 2 < params.length) {
+                  final index = params[i + 2];
+                  handler.setBackgroundColor256(index);
+                  i += 2;
+                }
+                break;
+            }
           }
           continue;
         case 49:
@@ -1089,6 +1178,11 @@ class EscapeParser {
         case '2':
           handler.setTitle(pt);
           return true;
+        case '8':
+          // OSC 8 — Hyperlinks. Format: OSC 8 ; params ; uri ST
+          final uri = _osc.length >= 3 ? _osc[2] : '';
+          handler.setHyperlink(uri.isNotEmpty);
+          return true;
       }
     }
 
@@ -1152,6 +1246,11 @@ class _Csi {
   int? prefix;
 
   List<int> params;
+
+  /// Sub-parameters separated by ':' (colon) in CSI sequences.
+  /// Maps param index → list of sub-parameter values.
+  /// E.g., `CSI 4:3m` → params=[4], subParams={0: [3]}
+  final Map<int, List<int>> subParams = {};
 
   int finalByte;
   // final List<int> intermediates;

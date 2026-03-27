@@ -812,7 +812,12 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void setCursorUnderline() {
-    _cursorStyle.setUnderline();
+    // Suppress underline when an OSC 8 hyperlink is active.
+    // Apps like Claude Code pair SGR 4m with OSC 8 hyperlinks, but
+    // terminals that support OSC 8 don't show the SGR underline.
+    if (!_hyperlinkActive) {
+      _cursorStyle.setUnderline();
+    }
   }
 
   @override
@@ -943,6 +948,20 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
       final seq = 'OSC $ps ; ${pt.join(";")}';
       debugConfig.onUnhandledSequence?.call(seq);
       debugConfig.onLog?.call('warn', 'parser', 'Unhandled OSC: $seq');
+    }
+  }
+
+  /// Whether a hyperlink (OSC 8) is currently active.
+  bool _hyperlinkActive = false;
+
+  @override
+  void setHyperlink(bool active) {
+    _hyperlinkActive = active;
+    // When a hyperlink starts, suppress any SGR underline that was set
+    // alongside it. Apps like Claude Code send SGR 4m with OSC 8, but
+    // terminals that support OSC 8 (iTerm2) don't show the underline.
+    if (active) {
+      _cursorStyle.unsetUnderline();
     }
   }
 }

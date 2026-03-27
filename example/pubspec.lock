@@ -128,11 +128,10 @@ packages:
   flutter_pty:
     dependency: "direct main"
     description:
-      name: flutter_pty
-      sha256: "08b6f37a4f394159e3a6adb6f07295e6fb6acb71270c87a4d0be187db34535cd"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.4.0"
+      path: "/Users/chrisdrury/projects/DEV_RAG/flutter_pty"
+      relative: false
+    source: path
+    version: "0.4.2"
   flutter_test:
     dependency: "direct dev"
     description: flutter
