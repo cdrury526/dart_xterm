@@ -80,3 +80,7 @@ example/lib/debug.dart
 coverage/
 
 example2/
+
+# Local investigation artifacts
+code-research/
+test/src/failures/*.png
