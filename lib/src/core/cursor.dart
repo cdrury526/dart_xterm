@@ -43,6 +43,10 @@ class CursorStyle {
     attrs |= CellAttr.strikethrough;
   }
 
+  void setOverline() {
+    attrs |= CellAttr.overline;
+  }
+
   void unsetBold() {
     attrs &= ~CellAttr.bold;
   }
@@ -73,6 +77,10 @@ class CursorStyle {
 
   void unsetStrikethrough() {
     attrs &= ~CellAttr.strikethrough;
+  }
+
+  void unsetOverline() {
+    attrs &= ~CellAttr.overline;
   }
 
   bool get isBold => (attrs & CellAttr.bold) != 0;

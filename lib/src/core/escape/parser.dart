@@ -114,7 +114,7 @@ class EscapeParser {
     'E'.charCode: _escHandleNextLine,
     'H'.charCode: _escHandleTabSet,
     'M'.charCode: _escHandleReverseIndex,
-    // 'P'.charCode: _unsupportedHandler, // Sixel
+    'P'.charCode: _escHandleDCS, // DCS — Device Control String (consume & discard)
     // 'c'.charCode: _unsupportedHandler,
     // '#'.charCode: _unsupportedHandler,
     '('.charCode: _escHandleDesignateCharset0, //  SCS - G0
@@ -124,6 +124,26 @@ class EscapeParser {
     '>'.charCode: _escHandleResetAppKeypadMode, // TODO: Normal Keypad
     '='.charCode: _escHandleSetAppKeypadMode, // TODO: Application Keypad
   });
+
+  /// `ESC P ... ST` — Device Control String (DCS).
+  ///
+  /// Consumes the DCS content until the string terminator (ESC \ or BEL)
+  /// and discards it. Sixel graphics, DECRQSS, and other DCS sequences
+  /// are not implemented, but we must consume them to avoid corrupting
+  /// the parse state.
+  bool _escHandleDCS() {
+    while (true) {
+      if (_queue.isEmpty) return false;
+      final char = _queue.consume();
+      // DCS terminates with BEL (some terminals) or ST (ESC \).
+      if (char == Ascii.BEL) return true;
+      if (char == Ascii.ESC) {
+        if (_queue.isEmpty) return false;
+        if (_queue.consume() == Ascii.backslash) return true;
+        // Not ST — keep consuming.
+      }
+    }
+  }
 
   /// `ESC 7` Save Cursor (DECSC)
   ///
@@ -354,6 +374,7 @@ class EscapeParser {
     'q'.codeUnitAt(0): _csiHandleXtVersion,
     'r'.codeUnitAt(0): _csiHandleSetMargins,
     't'.codeUnitAt(0): _csiWindowManipulation,
+    'u'.codeUnitAt(0): _csiHandleKittyKeyboard,
     'A'.codeUnitAt(0): _csiHandleCursorUp,
     'B'.codeUnitAt(0): _csiHandleCursorDown,
     'C'.codeUnitAt(0): _csiHandleCursorForward,
@@ -555,6 +576,60 @@ class EscapeParser {
           handler.unsetCursorStrikethrough();
           continue;
 
+        // SGR 53 — overline on
+        case 53:
+          handler.setCursorOverline();
+          continue;
+        // SGR 55 — overline off
+        case 55:
+          handler.unsetCursorOverline();
+          continue;
+
+        // SGR 58 — set underline color (colon-separated: 58:2::R:G:B
+        // or 58:5:N; semicolon-separated: 58;2;R;G;B or 58;5;N)
+        case 58:
+          final subs58 = _csi.subParams[i];
+          if (subs58 != null && subs58.isNotEmpty) {
+            final mode = subs58[0];
+            if (mode == 2 && subs58.length >= 4) {
+              // Colon format: 58:2:R:G:B or 58:2::R:G:B
+              // Some apps send an extra empty sub-param (the color space ID).
+              // If subs58 has 5+ elements, the RGB values start at index 2.
+              if (subs58.length >= 5) {
+                handler.setUnderlineColorRgb(
+                    subs58[2], subs58[3], subs58[4]);
+              } else {
+                handler.setUnderlineColorRgb(
+                    subs58[1], subs58[2], subs58[3]);
+              }
+            } else if (mode == 5 && subs58.length >= 2) {
+              handler.setUnderlineColor256(subs58[1]);
+            }
+          } else if (i + 1 < params.length) {
+            final mode = params[i + 1];
+            switch (mode) {
+              case 2:
+                if (i + 4 < params.length) {
+                  handler.setUnderlineColorRgb(
+                      params[i + 2], params[i + 3], params[i + 4]);
+                  i += 4;
+                }
+                break;
+              case 5:
+                if (i + 2 < params.length) {
+                  handler.setUnderlineColor256(params[i + 2]);
+                  i += 2;
+                }
+                break;
+            }
+          }
+          continue;
+
+        // SGR 59 — reset underline color to default
+        case 59:
+          handler.resetUnderlineColor();
+          continue;
+
         case 30:
           handler.setForegroundColor16(NamedColor.black);
           continue;
@@ -580,12 +655,22 @@ class EscapeParser {
           handler.setForegroundColor16(NamedColor.white);
           continue;
         case 38:
-          // Handle colon-separated sub-params: 38:2:R:G:B or 38:5:N
+          // Handle colon-separated sub-params: 38:2:R:G:B, 38:2::R:G:B,
+          // 38:2:CS:R:G:B, or 38:5:N
           final subs38 = _csi.subParams[i];
           if (subs38 != null && subs38.isNotEmpty) {
             final mode = subs38[0];
             if (mode == 2 && subs38.length >= 4) {
-              handler.setForegroundColorRgb(subs38[1], subs38[2], subs38[3]);
+              // 38:2:CS:R:G:B (5+ sub-params) or 38:2:R:G:B (4 sub-params).
+              // When there are 5+ sub-params, the color space ID is at [1]
+              // and RGB starts at [2]. When exactly 4, RGB is at [1..3].
+              if (subs38.length >= 5) {
+                handler.setForegroundColorRgb(
+                    subs38[2], subs38[3], subs38[4]);
+              } else {
+                handler.setForegroundColorRgb(
+                    subs38[1], subs38[2], subs38[3]);
+              }
             } else if (mode == 5 && subs38.length >= 2) {
               handler.setForegroundColor256(subs38[1]);
             }
@@ -641,12 +726,20 @@ class EscapeParser {
           handler.setBackgroundColor16(NamedColor.white);
           continue;
         case 48:
-          // Handle colon-separated sub-params: 48:2:R:G:B or 48:5:N
+          // Handle colon-separated sub-params: 48:2:R:G:B, 48:2::R:G:B,
+          // 48:2:CS:R:G:B, or 48:5:N
           final subs48 = _csi.subParams[i];
           if (subs48 != null && subs48.isNotEmpty) {
             final mode = subs48[0];
             if (mode == 2 && subs48.length >= 4) {
-              handler.setBackgroundColorRgb(subs48[1], subs48[2], subs48[3]);
+              // Same color space ID handling as SGR 38.
+              if (subs48.length >= 5) {
+                handler.setBackgroundColorRgb(
+                    subs48[2], subs48[3], subs48[4]);
+              } else {
+                handler.setBackgroundColorRgb(
+                    subs48[1], subs48[2], subs48[3]);
+              }
             } else if (mode == 5 && subs48.length >= 2) {
               handler.setBackgroundColor256(subs48[1]);
             }
@@ -781,6 +874,34 @@ class EscapeParser {
     final mode = _csi.params[0];
     final isDec = _csi.prefix == Ascii.questionMark;
     handler.requestMode(mode, isDec: isDec);
+  }
+
+  /// Kitty keyboard protocol handler.
+  ///
+  /// - `CSI > Ps u` — Push keyboard mode (set flags).
+  /// - `CSI < Ps u` — Pop keyboard mode.
+  /// - `CSI ? u` — Query current keyboard mode (response: CSI ? flags u).
+  ///
+  /// action: 1 = push (prefix >), 2 = pop (prefix <), 3 = query (prefix ?)
+  void _csiHandleKittyKeyboard() {
+    final flags = _csi.params.isNotEmpty ? _csi.params[0] : 0;
+    int action;
+    switch (_csi.prefix) {
+      case Ascii.greaterThan:
+        action = 1; // push
+        break;
+      case Ascii.lessThan:
+        action = 2; // pop
+        break;
+      case Ascii.questionMark:
+        action = 3; // query
+        break;
+      default:
+        // Plain CSI Ps u — this could be a kitty fixterms key report.
+        // Silently ignore for now.
+        return;
+    }
+    handler.kittyKeyboardMode(flags: flags, action: action);
   }
 
   /// `ESC [ Ps ; Ps r` Set Top and Bottom Margins (DECSTBM)
@@ -1224,8 +1345,19 @@ class EscapeParser {
           return true;
         case '8':
           // OSC 8 — Hyperlinks. Format: OSC 8 ; params ; uri ST
+          // params is key=value pairs (e.g. "id=foo"), uri is the target.
+          // Empty uri means end of hyperlink.
+          final linkParams = _osc.length >= 2 ? _osc[1] : '';
           final uri = _osc.length >= 3 ? _osc[2] : '';
-          handler.setHyperlink(uri.isNotEmpty);
+          handler.setHyperlink(uri, params: linkParams);
+          return true;
+        case '52':
+          // OSC 52 — Clipboard access. Format: OSC 52 ; Pc ; Pd ST
+          // Pc = clipboard selection target (c, p, s, etc.)
+          // Pd = base64-encoded data, or '?' to request contents.
+          if (_osc.length >= 3) {
+            handler.clipboardAccess(_osc[1], _osc[2]);
+          }
           return true;
       }
     }

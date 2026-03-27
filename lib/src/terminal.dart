@@ -570,6 +570,19 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   }
 
   @override
+  void kittyKeyboardMode({required int flags, required int action}) {
+    // Kitty keyboard protocol — we respond to queries with mode 0 (legacy)
+    // to indicate we don't support progressive enhancement. Push and pop
+    // are silently accepted so apps probing for support don't see errors.
+    if (action == 3) {
+      // Query: respond with CSI ? 0 u (legacy mode, no flags set).
+      onOutput?.call('\x1b[?0u');
+    }
+    // action 1 (push) and 2 (pop) are silently ignored — we always
+    // operate in legacy keyboard mode.
+  }
+
+  @override
   void requestMode(int mode, {required bool isDec}) {
     // DECRPM values: 0=not recognized, 1=set, 2=reset,
     //               3=permanently set, 4=permanently reset
@@ -946,6 +959,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   }
 
   @override
+  void setCursorOverline() {
+    _cursorStyle.setOverline();
+  }
+
+  @override
   void unsetCursorBold() {
     _cursorStyle.unsetBold();
   }
@@ -983,6 +1001,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void unsetCursorStrikethrough() {
     _cursorStyle.unsetStrikethrough();
+  }
+
+  @override
+  void unsetCursorOverline() {
+    _cursorStyle.unsetOverline();
   }
 
   @override
@@ -1026,6 +1049,24 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   }
 
   @override
+  void setUnderlineColorRgb(int r, int g, int b) {
+    // Underline color accepted but not yet rendered — the CellData structure
+    // does not have a dedicated field for underline color. We accept the
+    // sequence silently so apps that send SGR 58:2::R:G:B do not trigger
+    // unhandled-sequence warnings.
+  }
+
+  @override
+  void setUnderlineColor256(int index) {
+    // Accepted but not yet rendered. See setUnderlineColorRgb comment.
+  }
+
+  @override
+  void resetUnderlineColor() {
+    // Accepted but not yet rendered. See setUnderlineColorRgb comment.
+  }
+
+  @override
   void unsupportedStyle(int param) {
     if (debugConfig.logUnhandledSequences) {
       final seq = 'SGR $param';
@@ -1059,14 +1100,28 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// Whether a hyperlink (OSC 8) is currently active.
   bool _hyperlinkActive = false;
 
+  /// The current hyperlink URI (empty string when no hyperlink is active).
+  String _hyperlinkUri = '';
+
   @override
-  void setHyperlink(bool active) {
-    _hyperlinkActive = active;
+  void setHyperlink(String uri, {String params = ''}) {
+    _hyperlinkActive = uri.isNotEmpty;
+    _hyperlinkUri = uri;
     // When a hyperlink starts, suppress any SGR underline that was set
     // alongside it. Apps like Claude Code send SGR 4m with OSC 8, but
     // terminals that support OSC 8 (iTerm2) don't show the underline.
-    if (active) {
+    if (_hyperlinkActive) {
       _cursorStyle.unsetUnderline();
     }
+  }
+
+  /// Callback for OSC 52 clipboard access requests.
+  /// [clipboard] is the selection target ('c' for clipboard, 'p' for primary).
+  /// [data] is base64-encoded content, or '?' to request clipboard contents.
+  void Function(String clipboard, String data)? onClipboard;
+
+  @override
+  void clipboardAccess(String clipboard, String data) {
+    onClipboard?.call(clipboard, data);
   }
 }

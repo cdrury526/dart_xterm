@@ -246,6 +246,12 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void kittyKeyboardMode({required int flags, required int action}) {
+    final actionName = switch (action) { 1 => 'push', 2 => 'pop', 3 => 'query', _ => 'unknown($action)' };
+    onCommand('kittyKeyboardMode(flags=$flags, action=$actionName)');
+  }
+
+  @override
   void sendOperatingStatus() {
     onCommand('sendOperatingStatus');
   }
@@ -502,6 +508,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void setCursorOverline() {
+    onCommand('setCursorOverline');
+  }
+
+  @override
   void unsetCursorBold() {
     onCommand('unsetCursorBold');
   }
@@ -539,6 +550,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   @override
   void unsetCursorStrikethrough() {
     onCommand('unsetCursorStrikethrough');
+  }
+
+  @override
+  void unsetCursorOverline() {
+    onCommand('unsetCursorOverline');
   }
 
   @override
@@ -582,6 +598,21 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void setUnderlineColorRgb(int r, int g, int b) {
+    onCommand('setUnderlineColorRgb($r, $g, $b)');
+  }
+
+  @override
+  void setUnderlineColor256(int index) {
+    onCommand('setUnderlineColor256($index)');
+  }
+
+  @override
+  void resetUnderlineColor() {
+    onCommand('resetUnderlineColor');
+  }
+
+  @override
   void unsupportedStyle(int param) {
     onCommand('unsupportedStyle($param)', error: true);
   }
@@ -604,7 +635,12 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
-  void setHyperlink(bool active) {
-    onCommand('setHyperlink($active)');
+  void setHyperlink(String uri, {String params = ''}) {
+    onCommand('setHyperlink(uri=$uri, params=$params)');
+  }
+
+  @override
+  void clipboardAccess(String clipboard, String data) {
+    onCommand('clipboardAccess($clipboard, ${data.length > 20 ? "${data.substring(0, 20)}..." : data})');
   }
 }

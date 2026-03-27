@@ -72,6 +72,12 @@ abstract class EscapeHandler {
   /// from ANSI modes. Response: CSI [?] Ps ; Pm $ y
   void requestMode(int mode, {required bool isDec});
 
+  /// Kitty keyboard protocol — CSI > Ps u (push mode), CSI < u (pop mode),
+  /// CSI ? u (query mode). We accept these silently (responding with mode 0
+  /// for queries) so apps that probe for kitty keyboard support don't get
+  /// confused by unknown-CSI errors.
+  void kittyKeyboardMode({required int flags, required int action});
+
   void sendOperatingStatus();
 
   void sendCursorPosition();
@@ -180,6 +186,9 @@ abstract class EscapeHandler {
 
   void setCursorStrikethrough();
 
+  /// SGR 53 — set overline decoration.
+  void setCursorOverline();
+
   void unsetCursorBold();
 
   void unsetCursorFaint();
@@ -195,6 +204,9 @@ abstract class EscapeHandler {
   void unsetCursorInvisible();
 
   void unsetCursorStrikethrough();
+
+  /// SGR 55 — unset overline decoration.
+  void unsetCursorOverline();
 
   void setForegroundColor16(int color);
 
@@ -212,6 +224,15 @@ abstract class EscapeHandler {
 
   void resetBackground();
 
+  /// SGR 58:2::R:G:B — set underline color (RGB).
+  void setUnderlineColorRgb(int r, int g, int b);
+
+  /// SGR 58:5:N — set underline color (256 palette).
+  void setUnderlineColor256(int index);
+
+  /// SGR 59 — reset underline color to default.
+  void resetUnderlineColor();
+
   void unsupportedStyle(int param);
 
   /* OSC */
@@ -222,5 +243,12 @@ abstract class EscapeHandler {
 
   void unknownOSC(String code, List<String> args);
 
-  void setHyperlink(bool active);
+  /// OSC 8 — hyperlink. [uri] is the link target (empty string means end).
+  /// [params] is the key=value parameter string (e.g. "id=foo").
+  void setHyperlink(String uri, {String params = ''});
+
+  /// OSC 52 — clipboard access. [clipboard] is the selection target
+  /// (e.g. 'c' for clipboard, 'p' for primary). [data] is base64-encoded
+  /// content, or '?' to request the clipboard contents.
+  void clipboardAccess(String clipboard, String data);
 }
