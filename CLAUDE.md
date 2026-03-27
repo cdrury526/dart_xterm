@@ -41,14 +41,23 @@ lib/
       circular_buffer.dart     — IndexAwareCircularBuffer (buffer corruption fix here)
 ```
 
-## Critical Bugs to Fix
+## Bugs Fixed (from upstream xterm.dart)
 
-| Issue | File | Status |
+| Issue | File | Fix | Status |
+|---|---|---|---|
+| #207: Keyboard broken on Flutter 3.32+ | `lib/src/ui/custom_text_edit.dart` | Added `View.of(context).viewId` to TextInput.attach | DONE |
+| #222: scrollUp/scrollDown buffer corruption | `lib/src/core/buffer/buffer.dart` | Replaced index assignment with splice-based remove+insert (matches xterm.js) | DONE |
+| #197: Can't select text after scrolling | `lib/src/ui/render.dart` | Threaded `paintOffset` through _paintSelection/_paintHighlights/_paintSegment | DONE |
+| #199: Reflow data loss exceeding maxlines | `lib/src/core/buffer/buffer.dart` | Width reflow runs before height adjustment, cursor anchor tracking | DONE |
+
+## Known Rendering Issues (to fix)
+
+| Issue | Description | Likely cause |
 |---|---|---|
-| #207: Keyboard broken on Flutter 3.32+ | `lib/src/ui/custom_text_edit.dart` | Fix viewId in TextInput.attach |
-| #222: scrollUp/scrollDown buffer corruption | `lib/src/utils/circular_buffer.dart` + `lib/src/core/buffer/buffer.dart` | Fix index tracking during scroll |
-| #197: Can't select text after scrolling | `lib/src/ui/render.dart` | Fix coordinate translation |
-| #199: Reflow data loss exceeding maxlines | `lib/src/core/reflow.dart` | Preserve scrollback during reflow |
+| Box-drawing chars as thick bars | `─` (U+2500) renders as full-width block instead of thin line | Painter may be using wrong glyph width or fallback rendering |
+| OSC title leak (`t:` on screen) | `\x1b]0;title\x07` not fully consumed by parser | Parser may not be handling OSC 0 correctly |
+| Unexpected underlines | Some text appears underlined that shouldn't be | SGR (Select Graphic Rendition) sequence misinterpretation |
+| Keyboard listener control char leak | Backspace was inserting spaces | Fixed: filter control chars (0x00-0x1F, 0x7F) in CustomKeyboardListener._onKeyEvent |
 
 ## Key Classes
 
@@ -152,11 +161,16 @@ cd example && flutter run -d macos
 flutter test
 ```
 
-## Key Gotchas
+## Key Gotchas (verified during implementation)
 
-- **Package renamed from xterm to dart_xterm** — all imports use `package:dart_xterm/`
-- **No file over 600 lines** — split into focused, composable files.
-- **terminal.dart is 906 lines** in the upstream fork — may need splitting.
+- **Package renamed from xterm to dart_xterm** — all imports use `package:dart_xterm/`. Barrel export is `package:dart_xterm/dart_xterm.dart`.
+- **PTY output must be UTF-8 decoded** — use `Utf8Decoder(allowMalformed: true).convert(data)` before `terminal.write()`. Never use `String.fromCharCodes()` — breaks multi-byte characters.
+- **TERM=xterm-256color** — callers must set this in the PTY environment or zsh backspace/cursor breaks.
+- **hardwareKeyboardOnly: true for desktop** — use this on desktop to avoid TextInput system intercepting keys. The CustomTextEdit path is for mobile soft keyboards.
+- **fontFamily must be a single font name** — `TerminalStyle(fontFamily: 'Menlo')` not CSS-style comma-separated lists.
+- **withOpacity deprecated** — use `withValues(alpha: x)` instead (Flutter 3.38+).
+- **1 pre-existing golden test failure** — text_scale_factor test has pixel differences, unrelated to our changes.
+- **No file over 600 lines** — terminal.dart is 906 lines in the upstream fork and should be split.
 
 ## Companion Package
 
