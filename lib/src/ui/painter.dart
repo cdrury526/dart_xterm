@@ -1,9 +1,9 @@
 import 'dart:ui';
 import 'package:flutter/painting.dart';
 
-import 'package:xterm/src/ui/palette_builder.dart';
-import 'package:xterm/src/ui/paragraph_cache.dart';
-import 'package:xterm/xterm.dart';
+import 'package:dart_xterm/src/ui/palette_builder.dart';
+import 'package:dart_xterm/src/ui/paragraph_cache.dart';
+import 'package:dart_xterm/dart_xterm.dart';
 
 /// Encapsulates the logic for painting various terminal elements.
 class TerminalPainter {
@@ -185,7 +185,7 @@ class TerminalPainter {
           : resolveBackgroundColor(cellData.background);
 
       if (cellData.flags & CellFlags.faint != 0) {
-        color = color.withOpacity(0.5);
+        color = color.withValues(alpha: 0.5);
       }
 
       final style = _textStyle.toTextStyle(

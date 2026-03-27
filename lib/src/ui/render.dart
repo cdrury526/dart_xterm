@@ -3,19 +3,19 @@ import 'dart:ui';
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
-import 'package:xterm/src/core/buffer/cell_offset.dart';
-import 'package:xterm/src/core/buffer/range.dart';
-import 'package:xterm/src/core/buffer/segment.dart';
-import 'package:xterm/src/core/mouse/button.dart';
-import 'package:xterm/src/core/mouse/button_state.dart';
-import 'package:xterm/src/terminal.dart';
-import 'package:xterm/src/ui/controller.dart';
-import 'package:xterm/src/ui/cursor_type.dart';
-import 'package:xterm/src/ui/painter.dart';
-import 'package:xterm/src/ui/selection_mode.dart';
-import 'package:xterm/src/ui/terminal_size.dart';
-import 'package:xterm/src/ui/terminal_text_style.dart';
-import 'package:xterm/src/ui/terminal_theme.dart';
+import 'package:dart_xterm/src/core/buffer/cell_offset.dart';
+import 'package:dart_xterm/src/core/buffer/range.dart';
+import 'package:dart_xterm/src/core/buffer/segment.dart';
+import 'package:dart_xterm/src/core/mouse/button.dart';
+import 'package:dart_xterm/src/core/mouse/button_state.dart';
+import 'package:dart_xterm/src/terminal.dart';
+import 'package:dart_xterm/src/ui/controller.dart';
+import 'package:dart_xterm/src/ui/cursor_type.dart';
+import 'package:dart_xterm/src/ui/painter.dart';
+import 'package:dart_xterm/src/ui/selection_mode.dart';
+import 'package:dart_xterm/src/ui/terminal_size.dart';
+import 'package:dart_xterm/src/ui/terminal_text_style.dart';
+import 'package:dart_xterm/src/ui/terminal_theme.dart';
 
 typedef EditableRectCallback = void Function(Rect rect, Rect caretRect);
 
@@ -442,6 +442,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _controller.highlights,
       effectFirstLine,
       effectLastLine,
+      offset,
     );
 
     if (_controller.selection != null) {
@@ -450,6 +451,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _controller.selection!,
         effectFirstLine,
         effectLastLine,
+        offset,
       );
     }
   }
@@ -490,6 +492,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     BufferRange selection,
     int firstLine,
     int lastLine,
+    Offset paintOffset,
   ) {
     for (final segment in selection.toSegments()) {
       if (segment.line >= _terminal.buffer.lines.length) {
@@ -504,7 +507,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         break;
       }
 
-      _paintSegment(canvas, segment, _painter.theme.selection);
+      _paintSegment(canvas, segment, _painter.theme.selection, paintOffset);
     }
   }
 
@@ -513,6 +516,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     List<TerminalHighlight> highlights,
     int firstLine,
     int lastLine,
+    Offset paintOffset,
   ) {
     for (var highlight in _controller.highlights) {
       final range = highlight.range?.normalized;
@@ -532,17 +536,22 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           break;
         }
 
-        _paintSegment(canvas, segment, highlight.color);
+        _paintSegment(canvas, segment, highlight.color, paintOffset);
       }
     }
   }
 
   @pragma('vm:prefer-inline')
-  void _paintSegment(Canvas canvas, BufferSegment segment, Color color) {
+  void _paintSegment(
+    Canvas canvas,
+    BufferSegment segment,
+    Color color,
+    Offset paintOffset,
+  ) {
     final start = segment.start ?? 0;
     final end = segment.end ?? _terminal.viewWidth;
 
-    final startOffset = Offset(
+    final startOffset = paintOffset + Offset(
       start * _painter.cellSize.width,
       segment.line * _painter.cellSize.height + _lineOffset,
     );

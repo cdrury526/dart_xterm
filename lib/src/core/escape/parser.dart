@@ -1,10 +1,10 @@
-import 'package:xterm/src/core/color.dart';
-import 'package:xterm/src/core/mouse/mode.dart';
-import 'package:xterm/src/core/escape/handler.dart';
-import 'package:xterm/src/utils/ascii.dart';
-import 'package:xterm/src/utils/byte_consumer.dart';
-import 'package:xterm/src/utils/char_code.dart';
-import 'package:xterm/src/utils/lookup_table.dart';
+import 'package:dart_xterm/src/core/color.dart';
+import 'package:dart_xterm/src/core/mouse/mode.dart';
+import 'package:dart_xterm/src/core/escape/handler.dart';
+import 'package:dart_xterm/src/utils/ascii.dart';
+import 'package:dart_xterm/src/utils/byte_consumer.dart';
+import 'package:dart_xterm/src/utils/char_code.dart';
+import 'package:dart_xterm/src/utils/lookup_table.dart';
 
 /// [EscapeParser] translates control characters and escape sequences into
 /// function calls that the terminal can handle.
@@ -15,7 +15,17 @@ import 'package:xterm/src/utils/lookup_table.dart';
 class EscapeParser {
   final EscapeHandler handler;
 
-  EscapeParser(this.handler);
+  /// Called when a malformed escape sequence is encountered. The [sequence]
+  /// contains the raw bytes that could not be parsed, and [reason] explains
+  /// why parsing failed. This fires independently of [TerminalDebugConfig].
+  void Function(String sequence, String reason)? onParseError;
+
+  /// Called when a valid but unimplemented escape sequence is received. The
+  /// [sequence] is a human-readable representation. This fires independently
+  /// of [TerminalDebugConfig].
+  void Function(String sequence)? onUnhandledSequence;
+
+  EscapeParser(this.handler, {this.onParseError, this.onUnhandledSequence});
 
   final _queue = ByteConsumer();
 
@@ -56,6 +66,8 @@ class EscapeParser {
 
     final sbcHandler = _sbcHandlers[char];
     if (sbcHandler == null) {
+      onUnhandledSequence?.call(
+          'SBC 0x${char.toRadixString(16)} (${String.fromCharCode(char)})');
       handler.unkownEscape(char);
       return;
     }
@@ -72,6 +84,8 @@ class EscapeParser {
     final escapeHandler = _escHandlers[escapeChar];
 
     if (escapeHandler == null) {
+      onUnhandledSequence?.call(
+          'ESC 0x${escapeChar.toRadixString(16)} (${String.fromCharCode(escapeChar)})');
       handler.unkownEscape(escapeChar);
       return true;
     }
@@ -196,6 +210,9 @@ class EscapeParser {
     final csiHandler = _csiHandlers[_csi.finalByte];
 
     if (csiHandler == null) {
+      onUnhandledSequence?.call(
+          'CSI ${_csi.prefix != null ? "${String.fromCharCode(_csi.prefix!)} " : ""}'
+          '${_csi.params.join(";")} ${String.fromCharCode(_csi.finalByte)}');
       handler.unknownCSI(_csi.finalByte);
     } else {
       csiHandler();

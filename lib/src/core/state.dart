@@ -1,7 +1,11 @@
-import 'package:xterm/src/core/cursor.dart';
-import 'package:xterm/src/core/mouse/mode.dart';
+import 'package:dart_xterm/src/core/cursor.dart';
+import 'package:dart_xterm/src/core/mouse/mode.dart';
+import 'package:dart_xterm/src/terminal_debug_config.dart';
 
 abstract class TerminalState {
+  /// Debug configuration for logging. Defaults to disabled.
+  TerminalDebugConfig get debugConfig;
+
   int get viewWidth;
 
   int get viewHeight;

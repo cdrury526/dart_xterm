@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:xterm/xterm.dart';
+import 'package:dart_xterm/dart_xterm.dart';
 
 void main() {
   runApp(MyApp());

@@ -270,6 +270,34 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
     return List<T>.generate(length, (index) => this[index]);
   }
 
+  /// Debug-only: verifies that all items have indices consistent with their
+  /// position in the buffer. Silent in release builds.
+  void verifyIntegrity() {
+    assert(() {
+      for (var i = 0; i < _length; i++) {
+        final child = _getChild(i);
+        if (child == null) {
+          assert(false,
+              'CircularBuffer integrity: null child at index $i '
+              '(length=$_length)');
+          return true;
+        }
+        if (!child.attached) {
+          assert(false,
+              'CircularBuffer integrity: detached child at index $i');
+          return true;
+        }
+        if (child.index != i) {
+          assert(false,
+              'CircularBuffer integrity: child at index $i has '
+              'index=${child.index}');
+          return true;
+        }
+      }
+      return true;
+    }());
+  }
+
   String debugDump() {
     final buffer = StringBuffer();
     buffer.writeln('CircularList:');

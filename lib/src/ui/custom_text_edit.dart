@@ -159,7 +159,18 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     if (hasInputConnection) {
       _connection!.show();
     } else {
+      // Flutter 3.32+ requires a valid viewId when attaching to TextInput.
+      // Without it, the engine throws "Could not set client, view ID is null".
+      final view = View.maybeOf(context);
+      assert(
+        view != null,
+        'CustomTextEditState requires a View ancestor to obtain a viewId '
+        'for TextInput attachment. Ensure the widget is mounted within a '
+        'View (this is automatic in standard Flutter apps).',
+      );
+
       final config = TextInputConfiguration(
+        viewId: view?.viewId,
         inputType: widget.inputType,
         inputAction: widget.inputAction,
         keyboardAppearance: widget.keyboardAppearance,

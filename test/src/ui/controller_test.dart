@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:xterm/xterm.dart';
+import 'package:dart_xterm/dart_xterm.dart';
 
 void main() {
   group('TerminalController', () {

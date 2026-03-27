@@ -1,24 +1,25 @@
 import 'dart:math' show max;
 
-import 'package:xterm/src/base/observable.dart';
-import 'package:xterm/src/core/buffer/buffer.dart';
-import 'package:xterm/src/core/buffer/cell_offset.dart';
-import 'package:xterm/src/core/buffer/line.dart';
-import 'package:xterm/src/core/cursor.dart';
-import 'package:xterm/src/core/escape/emitter.dart';
-import 'package:xterm/src/core/escape/handler.dart';
-import 'package:xterm/src/core/escape/parser.dart';
-import 'package:xterm/src/core/input/handler.dart';
-import 'package:xterm/src/core/input/keys.dart';
-import 'package:xterm/src/core/mouse/button.dart';
-import 'package:xterm/src/core/mouse/button_state.dart';
-import 'package:xterm/src/core/mouse/handler.dart';
-import 'package:xterm/src/core/mouse/mode.dart';
-import 'package:xterm/src/core/platform.dart';
-import 'package:xterm/src/core/state.dart';
-import 'package:xterm/src/core/tabs.dart';
-import 'package:xterm/src/utils/ascii.dart';
-import 'package:xterm/src/utils/circular_buffer.dart';
+import 'package:dart_xterm/src/base/observable.dart';
+import 'package:dart_xterm/src/core/buffer/buffer.dart';
+import 'package:dart_xterm/src/core/buffer/cell_offset.dart';
+import 'package:dart_xterm/src/core/buffer/line.dart';
+import 'package:dart_xterm/src/core/cursor.dart';
+import 'package:dart_xterm/src/core/escape/emitter.dart';
+import 'package:dart_xterm/src/core/escape/handler.dart';
+import 'package:dart_xterm/src/core/escape/parser.dart';
+import 'package:dart_xterm/src/core/input/handler.dart';
+import 'package:dart_xterm/src/core/input/keys.dart';
+import 'package:dart_xterm/src/core/mouse/button.dart';
+import 'package:dart_xterm/src/core/mouse/button_state.dart';
+import 'package:dart_xterm/src/core/mouse/handler.dart';
+import 'package:dart_xterm/src/core/mouse/mode.dart';
+import 'package:dart_xterm/src/core/platform.dart';
+import 'package:dart_xterm/src/core/state.dart';
+import 'package:dart_xterm/src/core/tabs.dart';
+import 'package:dart_xterm/src/terminal_debug_config.dart';
+import 'package:dart_xterm/src/utils/ascii.dart';
+import 'package:dart_xterm/src/utils/circular_buffer.dart';
 
 /// [Terminal] is an interface to interact with command line applications. It
 /// translates escape sequences from the application into updates to the
@@ -70,6 +71,12 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// [Buffer.defaultWordSeparators] will be used.
   final Set<int>? wordSeparators;
 
+  /// Optional debug configuration for logging escape sequences, buffer
+  /// operations, and other terminal internals. When not provided (or set to
+  /// [TerminalDebugConfig.disabled]), adds zero overhead.
+  @override
+  final TerminalDebugConfig debugConfig;
+
   Terminal({
     this.maxLines = 1000,
     this.onBell,
@@ -83,9 +90,14 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     this.onPrivateOSC,
     this.reflowEnabled = true,
     this.wordSeparators,
+    this.debugConfig = const TerminalDebugConfig(),
   });
 
-  late final _parser = EscapeParser(this);
+  late final _parser = EscapeParser(
+    this,
+    onParseError: debugConfig.onParseError,
+    onUnhandledSequence: debugConfig.onUnhandledSequence,
+  );
 
   final _emitter = const EscapeEmitter();
 
@@ -478,7 +490,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void unkownEscape(int char) {
-    // no-op
+    if (debugConfig.logUnhandledSequences) {
+      final seq = 'ESC ${String.fromCharCode(char)} (0x${char.toRadixString(16)})';
+      debugConfig.onUnhandledSequence?.call(seq);
+      debugConfig.onLog?.call('warn', 'parser', 'Unhandled escape: $seq');
+    }
   }
 
   /* CSI */
@@ -648,7 +664,12 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void unknownCSI(int finalByte) {
-    // no-op
+    if (debugConfig.logUnhandledSequences) {
+      final seq =
+          'CSI ... ${String.fromCharCode(finalByte)} (0x${finalByte.toRadixString(16)})';
+      debugConfig.onUnhandledSequence?.call(seq);
+      debugConfig.onLog?.call('warn', 'parser', 'Unhandled CSI: $seq');
+    }
   }
 
   /* Modes */
@@ -665,7 +686,13 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void setUnknownMode(int mode, bool enabled) {
-    // no-op
+    if (debugConfig.logUnhandledSequences) {
+      final action = enabled ? 'set' : 'reset';
+      final seq = 'CSI $mode ${enabled ? "h" : "l"} (mode $action)';
+      debugConfig.onUnhandledSequence?.call(seq);
+      debugConfig.onLog?.call(
+          'warn', 'parser', 'Unhandled mode: $seq');
+    }
   }
 
   /* DEC Private modes */
@@ -752,7 +779,13 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void setUnknownDecMode(int mode, bool enabled) {
-    // no-op
+    if (debugConfig.logUnhandledSequences) {
+      final action = enabled ? 'set' : 'reset';
+      final seq = 'CSI ? $mode ${enabled ? "h" : "l"} (DECSET/DECRST $action)';
+      debugConfig.onUnhandledSequence?.call(seq);
+      debugConfig.onLog?.call(
+          'warn', 'parser', 'Unhandled DEC private mode: $seq');
+    }
   }
 
   /* Select Graphic Rendition (SGR) */
@@ -884,7 +917,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void unsupportedStyle(int param) {
-    // no-op
+    if (debugConfig.logUnhandledSequences) {
+      final seq = 'SGR $param';
+      debugConfig.onUnhandledSequence?.call(seq);
+      debugConfig.onLog?.call('warn', 'parser', 'Unsupported SGR style: $seq');
+    }
   }
 
   /* OSC */
@@ -902,5 +939,10 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void unknownOSC(String ps, List<String> pt) {
     onPrivateOSC?.call(ps, pt);
+    if (debugConfig.logUnhandledSequences && onPrivateOSC == null) {
+      final seq = 'OSC $ps ; ${pt.join(";")}';
+      debugConfig.onUnhandledSequence?.call(seq);
+      debugConfig.onLog?.call('warn', 'parser', 'Unhandled OSC: $seq');
+    }
   }
 }

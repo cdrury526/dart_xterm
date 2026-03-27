@@ -27,11 +27,16 @@ class CustomKeyboardListener extends StatelessWidget {
     // First try to handle the key event directly.
     final handled = onKeyEvent(focusNode, keyEvent);
     if (handled == KeyEventResult.ignored) {
-      // If it was not handled, but the key corresponds to a character,
-      // insert the character.
-      if (keyEvent.character != null && keyEvent.character != "") {
-        onInsert(keyEvent.character!);
-        return KeyEventResult.handled;
+      // If it was not handled, but the key corresponds to a printable character,
+      // insert the character. Filter out control characters (0x00-0x1F, 0x7F)
+      // which should be handled as key events, not text insertions.
+      final char = keyEvent.character;
+      if (char != null && char.isNotEmpty) {
+        final code = char.codeUnitAt(0);
+        if (code >= 0x20 && code != 0x7f) {
+          onInsert(char);
+          return KeyEventResult.handled;
+        }
       }
     }
     return handled;

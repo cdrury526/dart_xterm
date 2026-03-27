@@ -1,5 +1,5 @@
-import 'package:xterm/src/core/input/keys.dart';
-import 'package:xterm/src/core/input/keytab/keytab_escape.dart';
+import 'package:dart_xterm/src/core/input/keys.dart';
+import 'package:dart_xterm/src/core/input/keytab/keytab_escape.dart';
 
 enum KeytabActionType {
   input,

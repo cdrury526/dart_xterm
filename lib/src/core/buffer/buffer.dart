@@ -1,15 +1,15 @@
 import 'dart:math' show max, min;
 
-import 'package:xterm/src/core/buffer/cell_offset.dart';
-import 'package:xterm/src/core/buffer/line.dart';
-import 'package:xterm/src/core/buffer/range_line.dart';
-import 'package:xterm/src/core/buffer/range.dart';
-import 'package:xterm/src/core/charset.dart';
-import 'package:xterm/src/core/cursor.dart';
-import 'package:xterm/src/core/reflow.dart';
-import 'package:xterm/src/core/state.dart';
-import 'package:xterm/src/utils/circular_buffer.dart';
-import 'package:xterm/src/utils/unicode_v11.dart';
+import 'package:dart_xterm/src/core/buffer/cell_offset.dart';
+import 'package:dart_xterm/src/core/buffer/line.dart';
+import 'package:dart_xterm/src/core/buffer/range_line.dart';
+import 'package:dart_xterm/src/core/buffer/range.dart';
+import 'package:dart_xterm/src/core/charset.dart';
+import 'package:dart_xterm/src/core/cursor.dart';
+import 'package:dart_xterm/src/core/reflow.dart';
+import 'package:dart_xterm/src/core/state.dart';
+import 'package:dart_xterm/src/utils/circular_buffer.dart';
+import 'package:dart_xterm/src/utils/unicode_v11.dart';
 
 class Buffer {
   final TerminalState terminal;
@@ -206,23 +206,59 @@ class Buffer {
   }
 
   void scrollDown(int lines) {
-    for (var i = absoluteMarginBottom; i >= absoluteMarginTop; i--) {
-      if (i >= absoluteMarginTop + lines) {
-        this.lines[i] = this.lines[i - lines];
-      } else {
-        this.lines[i] = _newEmptyLine();
-      }
+    final debug = terminal.debugConfig;
+    if (debug.logBufferOperations) {
+      debug.onLog?.call('debug', 'buffer',
+          'scrollDown($lines) marginTop=$_marginTop marginBottom=$_marginBottom height=${this.lines.length}');
     }
+
+    // Cache absolute positions before mutations — these are computed from
+    // lines.length which changes during remove/insert.
+    final absTop = absoluteMarginTop;
+    final absBottom = absoluteMarginBottom;
+
+    // Match xterm.js: splice-based scroll that maintains index integrity.
+    // For each line scrolled: remove from bottom of scroll region, insert
+    // blank at top. This shifts all lines down without creating duplicates.
+    // The remove+insert pair keeps lines.length constant, so cached absolute
+    // positions remain valid across iterations.
+    for (var i = 0; i < lines; i++) {
+      this.lines.remove(absBottom);
+      this.lines.insert(absTop, _newEmptyLine());
+    }
+
+    assert(() {
+      _verifyBufferIntegrity('scrollDown');
+      return true;
+    }());
   }
 
   void scrollUp(int lines) {
-    for (var i = absoluteMarginTop; i <= absoluteMarginBottom; i++) {
-      if (i <= absoluteMarginBottom - lines) {
-        this.lines[i] = this.lines[i + lines];
-      } else {
-        this.lines[i] = _newEmptyLine();
-      }
+    final debug = terminal.debugConfig;
+    if (debug.logBufferOperations) {
+      debug.onLog?.call('debug', 'buffer',
+          'scrollUp($lines) marginTop=$_marginTop marginBottom=$_marginBottom height=${this.lines.length}');
     }
+
+    // Cache absolute positions before mutations — these are computed from
+    // lines.length which changes during remove/insert.
+    final absTop = absoluteMarginTop;
+    final absBottom = absoluteMarginBottom;
+
+    // Match xterm.js: splice-based scroll that maintains index integrity.
+    // For each line scrolled: remove from top of scroll region, insert
+    // blank at bottom. This shifts all lines up without creating duplicates.
+    // The remove+insert pair keeps lines.length constant, so cached absolute
+    // positions remain valid across iterations.
+    for (var i = 0; i < lines; i++) {
+      this.lines.remove(absTop);
+      this.lines.insert(absBottom, _newEmptyLine());
+    }
+
+    assert(() {
+      _verifyBufferIntegrity('scrollUp');
+      return true;
+    }());
   }
 
   /// https://vt100.net/docs/vt100-ug/chapter3.html#IND IND – Index
@@ -390,23 +426,16 @@ class Buffer {
 
     setCursorX(0);
 
-    // Number of lines from the cursor to the bottom of the scrollable region
-    // including the cursor itself.
-    final linesBelow = absoluteMarginBottom - absoluteCursorY + 1;
+    // Cache computed positions before mutations.
+    final absBottom = absoluteMarginBottom;
+    final absCursor = absoluteCursorY;
+    final linesToInsert = min(count, absBottom - absCursor + 1);
 
-    // Number of empty lines to insert.
-    final linesToInsert = min(count, linesBelow);
-
-    // Number of lines to move up.
-    final linesToMove = linesBelow - linesToInsert;
-
-    for (var i = 0; i < linesToMove; i++) {
-      final index = absoluteMarginBottom - i;
-      lines[index] = lines.swap(index - linesToInsert, _newEmptyLine());
-    }
-
-    for (var i = linesToMove; i < linesToInsert; i++) {
-      lines[absoluteCursorY + i] = _newEmptyLine();
+    // Remove lines from bottom of scroll region, insert blanks at cursor.
+    // This shifts lines down without creating duplicate references.
+    for (var i = 0; i < linesToInsert; i++) {
+      lines.remove(absBottom);
+      lines.insert(absCursor, _newEmptyLine());
     }
   }
 
@@ -420,60 +449,131 @@ class Buffer {
 
     setCursorX(0);
 
-    count = min(count, absoluteMarginBottom - absoluteCursorY + 1);
+    // Cache computed positions before mutations.
+    final absBottom = absoluteMarginBottom;
+    final absCursor = absoluteCursorY;
+    count = min(count, absBottom - absCursor + 1);
 
-    final linesToMove = absoluteMarginBottom - absoluteCursorY + 1 - count;
-
-    for (var i = 0; i < linesToMove; i++) {
-      final index = absoluteCursorY + i;
-      lines[index] = lines[index + count];
-    }
-
+    // Remove lines at cursor, insert blanks at bottom of scroll region.
+    // This shifts lines up without creating duplicate references.
     for (var i = 0; i < count; i++) {
-      lines[absoluteMarginBottom - i] = _newEmptyLine();
+      lines.remove(absCursor);
+      lines.insert(absBottom, _newEmptyLine());
     }
   }
 
   void resize(int oldWidth, int oldHeight, int newWidth, int newHeight) {
-    // 1. Adjust the height.
-    if (newHeight > oldHeight) {
-      // Grow larger
-      for (var i = 0; i < newHeight - oldHeight; i++) {
-        if (newHeight > lines.length) {
-          lines.push(_newEmptyLine(newWidth));
-        } else {
-          _cursorY++;
-        }
-      }
-    } else {
-      // Shrink smaller
-      for (var i = 0; i < oldHeight - newHeight; i++) {
-        if (_cursorY > newHeight - 1) {
-          _cursorY--;
-        } else {
-          lines.pop();
-        }
-      }
+    final debug = terminal.debugConfig;
+    if (debug.logBufferOperations) {
+      debug.onLog?.call('debug', 'buffer',
+          'resize(${oldWidth}x$oldHeight -> ${newWidth}x$newHeight) '
+          'lines=${lines.length} cursorY=$_cursorY');
     }
 
-    // Ensure cursor is within the screen.
-    _cursorX = _cursorX.clamp(0, newWidth - 1);
-    _cursorY = _cursorY.clamp(0, newHeight - 1);
+    final needsReflow =
+        newWidth != oldWidth && terminal.reflowEnabled && !isAltBuffer;
 
-    // 2. Adjust the width.
-    if (newWidth != oldWidth) {
-      if (terminal.reflowEnabled && !isAltBuffer) {
-        final reflowResult = reflow(lines, oldWidth, newWidth);
+    if (needsReflow) {
+      // When reflow is needed, do width adjustment FIRST, then height.
+      // This ensures the cursor position is correctly calculated after
+      // the buffer content changes due to reflow.
 
-        while (reflowResult.length < newHeight) {
-          reflowResult.add(_newEmptyLine(newWidth));
-        }
+      // Track the cursor's absolute position in the buffer before reflow.
+      // This lets us find where the cursor ends up after lines are
+      // rearranged.
+      final cursorAbsY = absoluteCursorY;
+      final cursorAnchor = createAnchor(_cursorX, cursorAbsY);
 
-        lines.replaceWith(reflowResult);
+      final reflowResult = reflow(lines, oldWidth, newWidth);
+
+      while (reflowResult.length < newHeight) {
+        reflowResult.add(_newEmptyLine(newWidth));
+      }
+
+      lines.replaceWith(reflowResult);
+
+      // Recalculate cursor position after reflow. At this point,
+      // viewHeight is still oldHeight (terminal hasn't updated yet),
+      // so we compute scrollback using oldHeight explicitly.
+      final newScrollBack = max(lines.length - oldHeight, 0);
+
+      if (cursorAnchor.attached) {
+        // The anchor survived reflow and buffer replacement — use its
+        // tracked position to restore the cursor.
+        _cursorX = cursorAnchor.x.clamp(0, newWidth - 1);
+        _cursorY = (cursorAnchor.y - newScrollBack).clamp(0, oldHeight - 1);
+        cursorAnchor.dispose();
       } else {
+        // The anchor's line was trimmed during replaceWith. Place the
+        // cursor at the top of the viewport.
+        _cursorX = _cursorX.clamp(0, newWidth - 1);
+        _cursorY = 0;
+      }
+
+      // Now adjust the height.
+      if (newHeight > oldHeight) {
+        for (var i = 0; i < newHeight - oldHeight; i++) {
+          if (newHeight > lines.length) {
+            lines.push(_newEmptyLine(newWidth));
+          } else {
+            _cursorY++;
+          }
+        }
+      } else {
+        for (var i = 0; i < oldHeight - newHeight; i++) {
+          if (_cursorY > newHeight - 1) {
+            _cursorY--;
+          } else {
+            lines.pop();
+          }
+        }
+      }
+
+      // Final clamp.
+      _cursorX = _cursorX.clamp(0, newWidth - 1);
+      _cursorY = _cursorY.clamp(0, newHeight - 1);
+    } else {
+      // No reflow needed — adjust height first, then width.
+
+      // 1. Adjust the height.
+      if (newHeight > oldHeight) {
+        for (var i = 0; i < newHeight - oldHeight; i++) {
+          if (newHeight > lines.length) {
+            lines.push(_newEmptyLine(newWidth));
+          } else {
+            _cursorY++;
+          }
+        }
+      } else {
+        for (var i = 0; i < oldHeight - newHeight; i++) {
+          if (_cursorY > newHeight - 1) {
+            _cursorY--;
+          } else {
+            lines.pop();
+          }
+        }
+      }
+
+      // Ensure cursor is within the screen.
+      _cursorX = _cursorX.clamp(0, newWidth - 1);
+      _cursorY = _cursorY.clamp(0, newHeight - 1);
+
+      // 2. Adjust the width (no reflow, just resize each line).
+      if (newWidth != oldWidth) {
         lines.forEach((item) => item.resize(newWidth));
       }
     }
+
+    if (debug.logBufferOperations) {
+      debug.onLog?.call('debug', 'buffer',
+          'resize complete: lines=${lines.length} cursorY=$_cursorY '
+          'scrollBack=$scrollBack');
+    }
+
+    assert(() {
+      _verifyBufferIntegrity('resize', expectedViewHeight: newHeight);
+      return true;
+    }());
   }
 
   /// Create a new [CellAnchor] at the specified [x] and [y] coordinates.
@@ -600,5 +700,43 @@ class Buffer {
     }
 
     return builder.toString();
+  }
+
+  /// Debug-only: verifies buffer invariants after critical operations.
+  /// Silent in release builds (only called inside assert()).
+  ///
+  /// [expectedViewHeight] can be provided when the terminal's viewHeight
+  /// has not yet been updated (e.g., during resize, where buffer.resize
+  /// runs before terminal._viewHeight is set).
+  void _verifyBufferIntegrity(String operation, {int? expectedViewHeight}) {
+    final debug = terminal.debugConfig;
+    final checkHeight = expectedViewHeight ?? viewHeight;
+
+    // Verify circular buffer index consistency.
+    lines.verifyIntegrity();
+
+    // Verify all lines in the buffer are attached and have valid indices.
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (!line.attached) {
+        final msg = '$operation: line at index $i is detached';
+        debug.onBufferWarning?.call(operation, msg);
+        if (debug.logBufferOperations) {
+          debug.onLog?.call('error', 'buffer', msg);
+        }
+        assert(false, msg);
+      }
+    }
+
+    // Verify line count is at least the expected view height.
+    if (lines.length < checkHeight) {
+      final msg =
+          '$operation: line count (${lines.length}) < viewHeight ($checkHeight)';
+      debug.onBufferWarning?.call(operation, msg);
+      if (debug.logBufferOperations) {
+        debug.onLog?.call('error', 'buffer', msg);
+      }
+      assert(false, msg);
+    }
   }
 }

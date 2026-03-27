@@ -1,5 +1,5 @@
 import 'package:test/test.dart';
-import 'package:xterm/xterm.dart';
+import 'package:dart_xterm/dart_xterm.dart';
 
 void main() {
   group('BufferSegment', () {
