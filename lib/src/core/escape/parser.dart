@@ -234,6 +234,7 @@ class EscapeParser {
 
     _csi.params.clear();
     _csi.subParams.clear();
+    _csi.intermediates.clear();
 
     // test whether the csi is a `CSI ? Ps ...` or `CSI Ps ...`
     final prefix = _queue.peek();
@@ -311,8 +312,13 @@ class EscapeParser {
         continue;
       }
 
+      // Intermediate bytes (0x20-0x2F) — e.g. '$' (0x24) in DECRQM.
+      // Bytes in range 0x01-0x1F are C0 controls embedded in the sequence
+      // (ignored per VT spec). Bytes 0x20-0x2F are intermediates.
       if (char > Ascii.NULL && char < Ascii.num0) {
-        // intermediates.add(char);
+        if (char >= 0x20 && char <= 0x2F) {
+          _csi.intermediates.add(char);
+        }
         continue;
       }
 
@@ -344,6 +350,8 @@ class EscapeParser {
     'l'.codeUnitAt(0): _csiHandleMode,
     'm'.codeUnitAt(0): _csiHandleSgr,
     'n'.codeUnitAt(0): _csiHandleDeviceStatusReport,
+    'p'.codeUnitAt(0): _csiHandleRequestMode,
+    'q'.codeUnitAt(0): _csiHandleXtVersion,
     'r'.codeUnitAt(0): _csiHandleSetMargins,
     't'.codeUnitAt(0): _csiWindowManipulation,
     'A'.codeUnitAt(0): _csiHandleCursorUp,
@@ -737,6 +745,42 @@ class EscapeParser {
       case 6:
         return handler.sendCursorPosition();
     }
+  }
+
+  /// `ESC [ > Ps q` XTVERSION — Report terminal name and version.
+  ///
+  /// Response: `DCS > | name(version) ST`
+  /// Only handled when prefix is `>`. Other prefixes are ignored.
+  void _csiHandleXtVersion() {
+    if (_csi.prefix != Ascii.greaterThan) return;
+
+    // Ps must be 0 or omitted.
+    if (_csi.params.isNotEmpty && _csi.params[0] > 0) return;
+
+    handler.sendXtVersion();
+  }
+
+  /// `ESC [ ? Ps $ p` DECRQM (DEC private) — Request DEC private mode.
+  /// `ESC [ Ps $ p` DECRQM (ANSI) — Request ANSI mode.
+  ///
+  /// The intermediate byte `$` (0x24) distinguishes this from other `p`
+  /// final-byte sequences. Without `$`, the `p` is ignored.
+  ///
+  /// Response: `CSI [?] Ps ; Pm $ y` where Pm is the mode status:
+  ///   0 = not recognized, 1 = set, 2 = reset,
+  ///   3 = permanently set, 4 = permanently reset
+  void _csiHandleRequestMode() {
+    // DECRQM requires `$` as an intermediate byte.
+    if (_csi.intermediates.isEmpty ||
+        _csi.intermediates[0] != 0x24 /* $ */) {
+      return;
+    }
+
+    if (_csi.params.isEmpty) return;
+
+    final mode = _csi.params[0];
+    final isDec = _csi.prefix == Ascii.questionMark;
+    handler.requestMode(mode, isDec: isDec);
   }
 
   /// `ESC [ Ps ; Ps r` Set Top and Bottom Margins (DECSTBM)
@@ -1253,7 +1297,10 @@ class _Csi {
   final Map<int, List<int>> subParams = {};
 
   int finalByte;
-  // final List<int> intermediates;
+
+  /// Intermediate bytes (0x20-0x2F range, e.g. `$` in DECRQM `CSI ? Ps $ p`).
+  /// Most CSI sequences have no intermediates, but DECRQM uses `$`.
+  final List<int> intermediates = [];
 
   @override
   String toString() {

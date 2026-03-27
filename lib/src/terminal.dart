@@ -91,7 +91,8 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     this.reflowEnabled = true,
     this.wordSeparators,
     this.debugConfig = const TerminalDebugConfig(),
-  });
+    EscapeEmitter? emitter,
+  }) : _emitter = emitter ?? const EscapeEmitter();
 
   late final _parser = EscapeParser(
     this,
@@ -99,7 +100,10 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     onUnhandledSequence: debugConfig.onUnhandledSequence,
   );
 
-  final _emitter = const EscapeEmitter();
+  /// The escape sequence emitter that generates responses to DA, DECRQM,
+  /// XTVERSION, and other terminal capability queries. Configure this via
+  /// the [emitter] constructor parameter to customize capability responses.
+  final EscapeEmitter _emitter;
 
   late var _buffer = _mainBuffer;
 
@@ -558,6 +562,107 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void sendTertiaryDeviceAttributes() {
     onOutput?.call(_emitter.tertiaryDeviceAttributes());
+  }
+
+  @override
+  void sendXtVersion() {
+    onOutput?.call(_emitter.xtVersion());
+  }
+
+  @override
+  void requestMode(int mode, {required bool isDec}) {
+    // DECRPM values: 0=not recognized, 1=set, 2=reset,
+    //               3=permanently set, 4=permanently reset
+    int value;
+
+    if (isDec) {
+      // DEC private modes (CSI ? Ps $ p)
+      value = _queryDecMode(mode);
+    } else {
+      // ANSI modes (CSI Ps $ p)
+      value = _queryAnsiMode(mode);
+    }
+
+    onOutput?.call(_emitter.decRequestMode(mode, value, isDec: isDec));
+  }
+
+  /// Query the current state of a DEC private mode for DECRQM.
+  ///
+  /// Returns DECRPM status values:
+  ///   0 = not recognized
+  ///   1 = set (enabled)
+  ///   2 = reset (disabled)
+  ///   3 = permanently set
+  ///   4 = permanently reset
+  int _queryDecMode(int mode) {
+    switch (mode) {
+      case 1: // DECCKM — Application Cursor Keys
+        return _cursorKeysMode ? 1 : 2;
+      case 3: // DECCOLM — 132 Column Mode (not supported)
+        return 0;
+      case 5: // DECSCNM — Reverse Video
+        return _reverseDisplayMode ? 1 : 2;
+      case 6: // DECOM — Origin Mode
+        return _originMode ? 1 : 2;
+      case 7: // DECAWM — Auto Wrap Mode
+        return _autoWrapMode ? 1 : 2;
+      case 8: // DECARM — Auto Repeat (always on)
+        return 3;
+      case 9: // X10 mouse reporting
+        return _mouseMode == MouseMode.clickOnly ? 1 : 2;
+      case 12: // Cursor blink (att610)
+        return _cursorBlinkMode ? 1 : 2;
+      case 25: // DECTCEM — Cursor visible
+        return _cursorVisibleMode ? 1 : 2;
+      case 45: // Reverse wraparound (not supported)
+        return 0;
+      case 47: // Use alt screen buffer
+        return isUsingAltBuffer ? 1 : 2;
+      case 66: // DECNKM — Application Keypad Mode
+        return _appKeypadMode ? 1 : 2;
+      case 67: // DECBKM — Backarrow sends BS (permanently reset)
+        return 4;
+      case 1000: // VT200 mouse — Send Mouse X & Y on button press
+        return _mouseMode == MouseMode.clickOnly ? 1 : 2;
+      case 1002: // Button event (drag) mouse tracking
+        return _mouseMode == MouseMode.upDownScrollDrag ? 1 : 2;
+      case 1003: // Any event mouse tracking
+        return _mouseMode == MouseMode.upDownScrollMove ? 1 : 2;
+      case 1004: // Send focus events
+        return _reportFocusMode ? 1 : 2;
+      case 1005: // UTF-8 mouse encoding (permanently reset, legacy)
+        return 4;
+      case 1006: // SGR mouse encoding
+        return _mouseReportMode == MouseReportMode.sgr ? 1 : 2;
+      case 1015: // Urxvt mouse encoding (permanently reset)
+        return 4;
+      case 1047: // Use alt screen buffer
+        return isUsingAltBuffer ? 1 : 2;
+      case 1048: // Save/restore cursor (always set per xterm behavior)
+        return 1;
+      case 1049: // Alt buffer + save/restore cursor
+        return isUsingAltBuffer ? 1 : 2;
+      case 2004: // Bracketed paste mode
+        return _bracketedPasteMode ? 1 : 2;
+      default:
+        return 0; // Not recognized
+    }
+  }
+
+  /// Query the current state of an ANSI mode for DECRQM.
+  int _queryAnsiMode(int mode) {
+    switch (mode) {
+      case 2: // KAM — Keyboard Action Mode (permanently reset)
+        return 4;
+      case 4: // IRM — Insert Mode
+        return _insertMode ? 1 : 2;
+      case 12: // SRM — Send/Receive (permanently set — local echo off)
+        return 3;
+      case 20: // LNM — Line Feed / New Line Mode
+        return _lineFeedMode ? 1 : 2;
+      default:
+        return 0; // Not recognized
+    }
   }
 
   @override

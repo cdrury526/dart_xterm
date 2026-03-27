@@ -63,6 +63,15 @@ abstract class EscapeHandler {
 
   void sendTertiaryDeviceAttributes();
 
+  /// XTVERSION (CSI > 0 q) — report terminal name and version.
+  /// Response: DCS > | name(version) ST
+  void sendXtVersion();
+
+  /// DECRQM (CSI ? Ps $ p / CSI Ps $ p) — request mode status.
+  /// [mode] is the mode number, [isDec] distinguishes DEC private modes
+  /// from ANSI modes. Response: CSI [?] Ps ; Pm $ y
+  void requestMode(int mode, {required bool isDec});
+
   void sendOperatingStatus();
 
   void sendCursorPosition();

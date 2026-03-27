@@ -236,6 +236,16 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void sendXtVersion() {
+    onCommand('sendXtVersion');
+  }
+
+  @override
+  void requestMode(int mode, {required bool isDec}) {
+    onCommand('requestMode($mode, isDec: $isDec)');
+  }
+
+  @override
   void sendOperatingStatus() {
     onCommand('sendOperatingStatus');
   }
