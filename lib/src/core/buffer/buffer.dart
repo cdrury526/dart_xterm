@@ -465,9 +465,11 @@ class Buffer {
   void resize(int oldWidth, int oldHeight, int newWidth, int newHeight) {
     final debug = terminal.debugConfig;
     if (debug.logBufferOperations) {
-      debug.onLog?.call('debug', 'buffer',
+      debug.onLog?.call(
+          'debug',
+          'buffer',
           'resize(${oldWidth}x$oldHeight -> ${newWidth}x$newHeight) '
-          'lines=${lines.length} cursorY=$_cursorY');
+              'lines=${lines.length} cursorY=$_cursorY');
     }
 
     final needsReflow =
@@ -490,6 +492,7 @@ class Buffer {
         reflowResult.add(_newEmptyLine(newWidth));
       }
 
+      final paddedToNewHeight = reflowResult.length >= newHeight;
       lines.replaceWith(reflowResult);
 
       // Recalculate cursor position after reflow. At this point,
@@ -511,7 +514,7 @@ class Buffer {
       }
 
       // Now adjust the height.
-      if (newHeight > oldHeight) {
+      if (newHeight > oldHeight && !paddedToNewHeight) {
         for (var i = 0; i < newHeight - oldHeight; i++) {
           if (newHeight > lines.length) {
             lines.push(_newEmptyLine(newWidth));
@@ -565,9 +568,11 @@ class Buffer {
     }
 
     if (debug.logBufferOperations) {
-      debug.onLog?.call('debug', 'buffer',
+      debug.onLog?.call(
+          'debug',
+          'buffer',
           'resize complete: lines=${lines.length} cursorY=$_cursorY '
-          'scrollBack=$scrollBack');
+              'scrollBack=$scrollBack');
     }
 
     assert(() {
