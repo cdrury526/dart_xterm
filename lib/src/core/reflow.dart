@@ -1,3 +1,5 @@
+import 'dart:math' show min;
+
 import 'package:dart_xterm/src/core/buffer/line.dart';
 import 'package:dart_xterm/src/utils/circular_buffer.dart';
 
@@ -160,15 +162,247 @@ class _LineReflow {
   }
 }
 
+bool _isShrinkProtectedStandaloneLine(BufferLine line, int oldWidth) {
+  final trimmedLength = line.getTrimmedLength(oldWidth);
+  if (trimmedLength == 0) {
+    return false;
+  }
+
+  var nonEmptyCells = 0;
+  var protectedCells = 0;
+
+  for (var i = 0; i < trimmedLength; i++) {
+    final codePoint = line.getCodePoint(i);
+    if (codePoint == 0) {
+      continue;
+    }
+
+    nonEmptyCells++;
+    if (_isBoxOrBlockDrawing(codePoint)) {
+      protectedCells++;
+    }
+  }
+
+  if (nonEmptyCells == 0) {
+    return false;
+  }
+
+  return protectedCells * 2 >= nonEmptyCells;
+}
+
+bool _hasLargeInternalGap(BufferLine line, int oldWidth, {int minGap = 8}) {
+  final trimmedLength = line.getTrimmedLength(oldWidth);
+  if (trimmedLength == 0) {
+    return false;
+  }
+
+  var inContentRun = false;
+  var gapLength = 0;
+  var contentRuns = 0;
+
+  for (var i = 0; i < trimmedLength; i++) {
+    final hasContent = line.getCodePoint(i) != 0;
+
+    if (hasContent) {
+      if (!inContentRun) {
+        contentRuns++;
+      }
+      if (gapLength >= minGap && contentRuns >= 2) {
+        return true;
+      }
+      inContentRun = true;
+      gapLength = 0;
+      continue;
+    }
+
+    if (inContentRun) {
+      gapLength++;
+    }
+    inContentRun = false;
+  }
+
+  return false;
+}
+
+List<(int start, int end)> _extractContentClusters(
+  BufferLine line,
+  int oldWidth, {
+  int minGap = 8,
+}) {
+  final trimmedLength = line.getTrimmedLength(oldWidth);
+  if (trimmedLength == 0) {
+    return const [];
+  }
+
+  final clusters = <(int start, int end)>[];
+  int? clusterStart;
+  var lastContent = -1;
+  var gapLength = 0;
+
+  for (var i = 0; i < trimmedLength; i++) {
+    final hasContent = line.getCodePoint(i) != 0;
+
+    if (hasContent) {
+      if (clusterStart == null) {
+        clusterStart = i;
+      } else if (gapLength >= minGap) {
+        clusters.add((clusterStart, lastContent + 1));
+        clusterStart = i;
+      }
+
+      lastContent = i;
+      gapLength = 0;
+      continue;
+    }
+
+    if (clusterStart != null) {
+      gapLength++;
+    }
+  }
+
+  if (clusterStart != null && lastContent >= clusterStart) {
+    clusters.add((clusterStart, lastContent + 1));
+  }
+
+  return clusters;
+}
+
+bool _isTrivialLeadingPromptCluster(
+  BufferLine line,
+  (int start, int end) cluster,
+) {
+  final (start, end) = cluster;
+  final length = end - start;
+
+  if (start != 0 || length <= 0 || length > 2) {
+    return false;
+  }
+
+  for (var i = start; i < end; i++) {
+    final codePoint = line.getCodePoint(i);
+    if (!_isPromptFragmentCodePoint(codePoint)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool _isPromptFragmentCodePoint(int codePoint) {
+  switch (codePoint) {
+    case 0x0025: // %
+    case 0x0024: // $
+    case 0x0023: // #
+    case 0x003E: // >
+    case 0x276F: // ❯
+    case 0x27A4: // ➤
+      return true;
+    default:
+      return false;
+  }
+}
+
+List<BufferLine> _wrapCluster(
+  BufferLine line,
+  int start,
+  int end,
+  int newWidth,
+) {
+  final result = <BufferLine>[];
+  var offset = start;
+
+  while (offset < end) {
+    final chunkEnd = min(offset + newWidth, end);
+    final chunkLength = chunkEnd - offset;
+    final chunk = BufferLine(newWidth);
+    chunk.copyFrom(line, offset, 0, chunkLength);
+    chunk.resize(newWidth);
+    chunk.isWrapped = result.isNotEmpty;
+
+    if (newWidth > 0 && chunk.getWidth(newWidth - 1) == 2) {
+      chunk.resetCell(newWidth - 1);
+    }
+
+    result.add(chunk);
+    offset = chunkEnd;
+  }
+
+  return result;
+}
+
+List<BufferLine> _reflowPreservingInternalGaps(
+  BufferLine line,
+  int oldWidth,
+  int newWidth,
+) {
+  final clusters = _extractContentClusters(line, oldWidth);
+  if (clusters.isEmpty) {
+    line.resize(newWidth);
+    return [line];
+  }
+
+  final filteredClusters = [...clusters];
+  if (filteredClusters.length > 1 &&
+      _isTrivialLeadingPromptCluster(line, filteredClusters.first)) {
+    filteredClusters.removeAt(0);
+  }
+
+  final result = <BufferLine>[];
+
+  for (final (start, end) in filteredClusters) {
+    final wrappedCluster = _wrapCluster(line, start, end, newWidth);
+    if (wrappedCluster.isEmpty) {
+      continue;
+    }
+
+    if (result.isNotEmpty) {
+      wrappedCluster.first.isWrapped = false;
+    }
+
+    result.addAll(wrappedCluster);
+  }
+
+  return result;
+}
+
+bool _isBoxOrBlockDrawing(int codePoint) {
+  return (codePoint >= 0x2500 && codePoint <= 0x259F) ||
+      (codePoint >= 0x2800 && codePoint <= 0x28FF);
+}
+
 List<BufferLine> reflow(
   IndexAwareCircularBuffer<BufferLine> lines,
   int oldWidth,
   int newWidth,
 ) {
   final result = <BufferLine>[];
+  final isShrinking = newWidth < oldWidth;
 
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
+    final nextLine = i + 1 < lines.length ? lines[i + 1] : null;
+
+    // Cursor-positioned TUIs redraw individual screen rows in place. When the
+    // viewport narrows, reflowing those standalone rows turns a fixed screen
+    // layout into wrapped garbage. Keep standalone rows fixed on shrink and
+    // only reflow actual wrapped logical lines.
+    if (isShrinking &&
+        nextLine?.isWrapped != true &&
+        _isShrinkProtectedStandaloneLine(line, oldWidth)) {
+      line.resize(newWidth);
+      if (newWidth > 0 && line.getWidth(newWidth - 1) == 2) {
+        line.resetCell(newWidth - 1);
+      }
+      result.add(line);
+      continue;
+    }
+
+    if (isShrinking &&
+        nextLine?.isWrapped != true &&
+        _hasLargeInternalGap(line, oldWidth)) {
+      result.addAll(_reflowPreservingInternalGaps(line, oldWidth, newWidth));
+      continue;
+    }
 
     final reflow = _LineReflow(oldWidth, newWidth);
 

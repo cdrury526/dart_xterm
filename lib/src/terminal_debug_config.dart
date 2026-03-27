@@ -54,6 +54,13 @@ class TerminalDebugConfig {
   /// [details] describes what was unexpected.
   final void Function(String operation, String details)? onBufferWarning;
 
+  /// Called when the terminal emits a response back to the program.
+  ///
+  /// [kind] identifies the response category (for example `da1`,
+  /// `xtversion`, or `decrqm`). [data] contains the exact bytes that will be
+  /// sent through [Terminal.onOutput].
+  final void Function(String kind, String data)? onTerminalResponse;
+
   const TerminalDebugConfig({
     this.logParseErrors = false,
     this.logUnhandledSequences = false,
@@ -62,6 +69,7 @@ class TerminalDebugConfig {
     this.onParseError,
     this.onUnhandledSequence,
     this.onBufferWarning,
+    this.onTerminalResponse,
   });
 
   /// Default config with all logging disabled. Zero overhead in production.

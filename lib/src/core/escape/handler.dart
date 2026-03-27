@@ -67,6 +67,10 @@ abstract class EscapeHandler {
   /// Response: DCS > | name(version) ST
   void sendXtVersion();
 
+  /// XTGETTCAP (DCS + q Pt ST) — request terminfo capability strings.
+  /// [names] contains decoded termcap names such as `TN`, `Co`, or `RGB`.
+  void requestTermcap(List<String> names);
+
   /// DECRQM (CSI ? Ps $ p / CSI Ps $ p) — request mode status.
   /// [mode] is the mode number, [isDec] distinguishes DEC private modes
   /// from ANSI modes. Response: CSI [?] Ps ; Pm $ y
@@ -159,6 +163,8 @@ abstract class EscapeHandler {
   void setAltBufferMouseScrollMode(bool enabled);
 
   void setBracketedPasteMode(bool enabled);
+
+  void setSynchronizedOutputMode(bool enabled);
 
   void setUnknownDecMode(int mode, bool enabled);
 

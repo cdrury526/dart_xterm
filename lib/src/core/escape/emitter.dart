@@ -93,12 +93,33 @@ class EscapeEmitter {
 
   /// XTVERSION (CSI > 0 q) — Report terminal name and version.
   ///
-  /// Response format: `DCS > | name(version) ST`.
+  /// Response format: `DCS > | name version ST`.
   /// This is how CLI apps identify the terminal program when TERM_PROGRAM
-  /// is not available or they want a more reliable signal. xterm.js responds
-  /// with `xterm.js(VERSION)`, wezterm with `wezterm VERSION`.
+  /// is not available or they want a more reliable signal.
   String xtVersion() {
-    return '\x1bP>|$termName($termVersion)\x1b\\';
+    return '\x1bP>|$termName $termVersion\x1b\\';
+  }
+
+  /// XTGETTCAP (`DCS + q Pt ST`) — report terminfo capabilities.
+  ///
+  /// Response format per capability:
+  /// - success: `DCS 1 + r Pt = Pv ST`
+  /// - unknown: `DCS 0 + r Pt ST`
+  ///
+  /// We only advertise a small safe subset that matches the terminal features
+  /// we actually implement today.
+  String xtGetTcap(List<String> names) {
+    final response = StringBuffer();
+    for (final name in names) {
+      final encodedName = _hexEncode(name);
+      final value = _termcapValue(name);
+      if (value == null) {
+        response.write('\x1bP0+r$encodedName\x1b\\');
+      } else {
+        response.write('\x1bP1+r$encodedName=${_hexEncode(value)}\x1b\\');
+      }
+    }
+    return response.toString();
   }
 
   /// DECRQM response (DECRPM) — report mode status.
@@ -133,5 +154,28 @@ class EscapeEmitter {
 
   String size(int rows, int cols) {
     return '\x1b[8;$rows;${cols}t';
+  }
+
+  String? _termcapValue(String name) {
+    switch (name) {
+      case 'TN':
+      case 'name':
+        return termName;
+      case 'Co':
+      case 'colors':
+        return '256';
+      case 'RGB':
+        return '8/8/8';
+      default:
+        return null;
+    }
+  }
+
+  String _hexEncode(String value) {
+    final buffer = StringBuffer();
+    for (final unit in value.codeUnits) {
+      buffer.write(unit.toRadixString(16).padLeft(2, '0').toUpperCase());
+    }
+    return buffer.toString();
   }
 }

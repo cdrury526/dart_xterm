@@ -45,4 +45,6 @@ abstract class TerminalState {
   bool get altBufferMouseScrollMode;
 
   bool get bracketedPasteMode;
+
+  bool get synchronizedOutputMode;
 }

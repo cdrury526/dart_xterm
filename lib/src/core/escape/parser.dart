@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dart_xterm/src/core/color.dart';
 import 'package:dart_xterm/src/core/mouse/mode.dart';
 import 'package:dart_xterm/src/core/escape/handler.dart';
@@ -114,7 +116,7 @@ class EscapeParser {
     'E'.charCode: _escHandleNextLine,
     'H'.charCode: _escHandleTabSet,
     'M'.charCode: _escHandleReverseIndex,
-    'P'.charCode: _escHandleDCS, // DCS — Device Control String (consume & discard)
+    'P'.charCode: _escHandleDCS, // DCS — Device Control String
     // 'c'.charCode: _unsupportedHandler,
     // '#'.charCode: _unsupportedHandler,
     '('.charCode: _escHandleDesignateCharset0, //  SCS - G0
@@ -127,22 +129,82 @@ class EscapeParser {
 
   /// `ESC P ... ST` — Device Control String (DCS).
   ///
-  /// Consumes the DCS content until the string terminator (ESC \ or BEL)
-  /// and discards it. Sixel graphics, DECRQSS, and other DCS sequences
-  /// are not implemented, but we must consume them to avoid corrupting
-  /// the parse state.
+  /// XTGETTCAP (`DCS + q Pt ST`) is handled explicitly so terminal-aware apps
+  /// can query basic terminfo capabilities. Other DCS sequences are consumed
+  /// and ignored so they do not corrupt the parse state.
   bool _escHandleDCS() {
+    final payload = <int>[];
     while (true) {
       if (_queue.isEmpty) return false;
       final char = _queue.consume();
-      // DCS terminates with BEL (some terminals) or ST (ESC \).
-      if (char == Ascii.BEL) return true;
+      // DCS terminates with BEL (some terminals) or ST (ESC \ or C1 0x9C).
+      if (char == Ascii.BEL) return _dispatchDcs(payload);
+      if (char == 0x9c) return _dispatchDcs(payload);
       if (char == Ascii.ESC) {
         if (_queue.isEmpty) return false;
-        if (_queue.consume() == Ascii.backslash) return true;
+        if (_queue.consume() == Ascii.backslash) return _dispatchDcs(payload);
         // Not ST — keep consuming.
+        payload.add(char);
+        payload.add(Ascii.backslash);
+        continue;
+      }
+      payload.add(char);
+    }
+  }
+
+  bool _dispatchDcs(List<int> payload) {
+    if (payload.length < 2) return true;
+
+    // XTGETTCAP: DCS + q Pt ST
+    if (payload[0] == Ascii.plus && payload[1] == Ascii.q) {
+      final names = _decodeXtGetTcapNames(payload.sublist(2));
+      if (names.isNotEmpty) {
+        handler.requestTermcap(names);
       }
     }
+
+    return true;
+  }
+
+  List<String> _decodeXtGetTcapNames(List<int> payload) {
+    if (payload.isEmpty) return const [];
+
+    final encodedNames = ascii.decode(payload, allowInvalid: true).split(';');
+    final names = <String>[];
+    for (final encodedName in encodedNames) {
+      final decodedName = _decodeHexAscii(encodedName);
+      if (decodedName != null && decodedName.isNotEmpty) {
+        names.add(decodedName);
+      }
+    }
+    return names;
+  }
+
+  String? _decodeHexAscii(String value) {
+    if (value.isEmpty || value.length.isOdd) return null;
+
+    final bytes = <int>[];
+    for (var i = 0; i < value.length; i += 2) {
+      final high = _decodeHexNibble(value.codeUnitAt(i));
+      final low = _decodeHexNibble(value.codeUnitAt(i + 1));
+      if (high < 0 || low < 0) return null;
+      bytes.add((high << 4) | low);
+    }
+
+    return ascii.decode(bytes, allowInvalid: true);
+  }
+
+  int _decodeHexNibble(int char) {
+    if (char >= Ascii.num0 && char <= Ascii.num9) {
+      return char - Ascii.num0;
+    }
+    if (char >= Ascii.A && char <= Ascii.F) {
+      return char - Ascii.A + 10;
+    }
+    if (char >= Ascii.a && char <= Ascii.f) {
+      return char - Ascii.a + 10;
+    }
+    return -1;
   }
 
   /// `ESC 7` Save Cursor (DECSC)
@@ -503,6 +565,14 @@ class EscapeParser {
   ///
   /// https://terminalguide.namepad.de/seq/csi_sm/
   void _csiHandleSgr() {
+    // Ignore private xterm-style CSI ... m sequences such as
+    // `CSI > 4 ; 2 m` / `CSI > 4 m` used for keyboard modifier options.
+    // They are not SGR, and treating them as plain SGR causes persistent
+    // underline styling across subsequent output.
+    if (_csi.prefix != null) {
+      return;
+    }
+
     final params = _csi.params;
 
     if (params.isEmpty) {
@@ -596,11 +666,9 @@ class EscapeParser {
               // Some apps send an extra empty sub-param (the color space ID).
               // If subs58 has 5+ elements, the RGB values start at index 2.
               if (subs58.length >= 5) {
-                handler.setUnderlineColorRgb(
-                    subs58[2], subs58[3], subs58[4]);
+                handler.setUnderlineColorRgb(subs58[2], subs58[3], subs58[4]);
               } else {
-                handler.setUnderlineColorRgb(
-                    subs58[1], subs58[2], subs58[3]);
+                handler.setUnderlineColorRgb(subs58[1], subs58[2], subs58[3]);
               }
             } else if (mode == 5 && subs58.length >= 2) {
               handler.setUnderlineColor256(subs58[1]);
@@ -665,11 +733,9 @@ class EscapeParser {
               // When there are 5+ sub-params, the color space ID is at [1]
               // and RGB starts at [2]. When exactly 4, RGB is at [1..3].
               if (subs38.length >= 5) {
-                handler.setForegroundColorRgb(
-                    subs38[2], subs38[3], subs38[4]);
+                handler.setForegroundColorRgb(subs38[2], subs38[3], subs38[4]);
               } else {
-                handler.setForegroundColorRgb(
-                    subs38[1], subs38[2], subs38[3]);
+                handler.setForegroundColorRgb(subs38[1], subs38[2], subs38[3]);
               }
             } else if (mode == 5 && subs38.length >= 2) {
               handler.setForegroundColor256(subs38[1]);
@@ -734,11 +800,9 @@ class EscapeParser {
             if (mode == 2 && subs48.length >= 4) {
               // Same color space ID handling as SGR 38.
               if (subs48.length >= 5) {
-                handler.setBackgroundColorRgb(
-                    subs48[2], subs48[3], subs48[4]);
+                handler.setBackgroundColorRgb(subs48[2], subs48[3], subs48[4]);
               } else {
-                handler.setBackgroundColorRgb(
-                    subs48[1], subs48[2], subs48[3]);
+                handler.setBackgroundColorRgb(subs48[1], subs48[2], subs48[3]);
               }
             } else if (mode == 5 && subs48.length >= 2) {
               handler.setBackgroundColor256(subs48[1]);
@@ -864,8 +928,7 @@ class EscapeParser {
   ///   3 = permanently set, 4 = permanently reset
   void _csiHandleRequestMode() {
     // DECRQM requires `$` as an intermediate byte.
-    if (_csi.intermediates.isEmpty ||
-        _csi.intermediates[0] != 0x24 /* $ */) {
+    if (_csi.intermediates.isEmpty || _csi.intermediates[0] != 0x24 /* $ */) {
       return;
     }
 
@@ -1310,6 +1373,8 @@ class EscapeParser {
         return;
       case 2004:
         return handler.setBracketedPasteMode(enabled);
+      case 2026:
+        return handler.setSynchronizedOutputMode(enabled);
       default:
         return handler.setUnknownDecMode(mode, enabled);
     }
@@ -1383,6 +1448,12 @@ class EscapeParser {
 
       // OSC terminates with BEL
       if (char == Ascii.BEL) {
+        _osc.add(param.toString());
+        return true;
+      }
+
+      // OSC also terminates with the single-byte C1 ST control.
+      if (char == 0x9c) {
         _osc.add(param.toString());
         return true;
       }

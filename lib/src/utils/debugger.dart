@@ -241,13 +241,23 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void requestTermcap(List<String> names) {
+    onCommand('requestTermcap(${names.join(", ")})');
+  }
+
+  @override
   void requestMode(int mode, {required bool isDec}) {
     onCommand('requestMode($mode, isDec: $isDec)');
   }
 
   @override
   void kittyKeyboardMode({required int flags, required int action}) {
-    final actionName = switch (action) { 1 => 'push', 2 => 'pop', 3 => 'query', _ => 'unknown($action)' };
+    final actionName = switch (action) {
+      1 => 'push',
+      2 => 'pop',
+      3 => 'query',
+      _ => 'unknown($action)'
+    };
     onCommand('kittyKeyboardMode(flags=$flags, action=$actionName)');
   }
 
@@ -456,6 +466,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void setSynchronizedOutputMode(bool enabled) {
+    onCommand('setSynchronizedOutputMode($enabled)');
+  }
+
+  @override
   void setUnknownDecMode(int mode, bool enabled) {
     onCommand('setUnknownDecMode($mode, $enabled)', error: true);
   }
@@ -641,6 +656,7 @@ class _TerminalDebuggerHandler implements EscapeHandler {
 
   @override
   void clipboardAccess(String clipboard, String data) {
-    onCommand('clipboardAccess($clipboard, ${data.length > 20 ? "${data.substring(0, 20)}..." : data})');
+    onCommand(
+        'clipboardAccess($clipboard, ${data.length > 20 ? "${data.substring(0, 20)}..." : data})');
   }
 }

@@ -163,6 +163,10 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   bool _bracketedPasteMode = false;
 
+  bool _synchronizedOutputMode = false;
+
+  bool _terminalChangePending = false;
+
   /* State getters */
 
   /// Number of cells in a terminal row.
@@ -218,6 +222,9 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   bool get bracketedPasteMode => _bracketedPasteMode;
 
+  @override
+  bool get synchronizedOutputMode => _synchronizedOutputMode;
+
   /// Current active buffer of the terminal. This is initially [mainBuffer] and
   /// can be switched back and forth from [altBuffer] to [mainBuffer] when
   /// the underlying program requests it.
@@ -241,7 +248,17 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// updates the states of the terminal and emits events such as [onBell] or
   /// [onTitleChange] when the escape sequences in [data] request it.
   void write(String data) {
+    _terminalChangePending = true;
     _parser.write(data);
+    _flushPendingTerminalChanges();
+  }
+
+  void _flushPendingTerminalChanges() {
+    if (_synchronizedOutputMode || !_terminalChangePending) {
+      return;
+    }
+
+    _terminalChangePending = false;
     notifyListeners();
   }
 
@@ -495,7 +512,8 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void unkownEscape(int char) {
     if (debugConfig.logUnhandledSequences) {
-      final seq = 'ESC ${String.fromCharCode(char)} (0x${char.toRadixString(16)})';
+      final seq =
+          'ESC ${String.fromCharCode(char)} (0x${char.toRadixString(16)})';
       debugConfig.onUnhandledSequence?.call(seq);
       debugConfig.onLog?.call('warn', 'parser', 'Unhandled escape: $seq');
     }
@@ -549,24 +567,40 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     _tabStops.clearAll();
   }
 
+  void _emitTerminalResponse(String kind, String data) {
+    debugConfig.onTerminalResponse?.call(kind, data);
+    onOutput?.call(data);
+  }
+
   @override
   void sendPrimaryDeviceAttributes() {
-    onOutput?.call(_emitter.primaryDeviceAttributes());
+    _emitTerminalResponse('da1', _emitter.primaryDeviceAttributes());
   }
 
   @override
   void sendSecondaryDeviceAttributes() {
-    onOutput?.call(_emitter.secondaryDeviceAttributes());
+    _emitTerminalResponse('da2', _emitter.secondaryDeviceAttributes());
   }
 
   @override
   void sendTertiaryDeviceAttributes() {
-    onOutput?.call(_emitter.tertiaryDeviceAttributes());
+    _emitTerminalResponse('da3', _emitter.tertiaryDeviceAttributes());
   }
 
   @override
   void sendXtVersion() {
-    onOutput?.call(_emitter.xtVersion());
+    _emitTerminalResponse('xtversion', _emitter.xtVersion());
+  }
+
+  @override
+  void requestTermcap(List<String> names) {
+    if (names.isEmpty) return;
+    debugConfig.onLog?.call(
+      'info',
+      'parser',
+      'XTGETTCAP request: ${names.join(", ")}',
+    );
+    _emitTerminalResponse('xtgettcap', _emitter.xtGetTcap(names));
   }
 
   @override
@@ -576,7 +610,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     // are silently accepted so apps probing for support don't see errors.
     if (action == 3) {
       // Query: respond with CSI ? 0 u (legacy mode, no flags set).
-      onOutput?.call('\x1b[?0u');
+      _emitTerminalResponse('kitty-keyboard', '\x1b[?0u');
     }
     // action 1 (push) and 2 (pop) are silently ignored — we always
     // operate in legacy keyboard mode.
@@ -596,7 +630,10 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
       value = _queryAnsiMode(mode);
     }
 
-    onOutput?.call(_emitter.decRequestMode(mode, value, isDec: isDec));
+    _emitTerminalResponse(
+      isDec ? 'decrqm-dec' : 'decrqm-ansi',
+      _emitter.decRequestMode(mode, value, isDec: isDec),
+    );
   }
 
   /// Query the current state of a DEC private mode for DECRQM.
@@ -657,6 +694,8 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
         return isUsingAltBuffer ? 1 : 2;
       case 2004: // Bracketed paste mode
         return _bracketedPasteMode ? 1 : 2;
+      case 2026: // Synchronized output
+        return _synchronizedOutputMode ? 1 : 2;
       default:
         return 0; // Not recognized
     }
@@ -680,12 +719,15 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void sendOperatingStatus() {
-    onOutput?.call(_emitter.operatingStatus());
+    _emitTerminalResponse('operating-status', _emitter.operatingStatus());
   }
 
   @override
   void sendCursorPosition() {
-    onOutput?.call(_emitter.cursorPosition(_buffer.cursorX, _buffer.cursorY));
+    _emitTerminalResponse(
+      'cursor-position',
+      _emitter.cursorPosition(_buffer.cursorX, _buffer.cursorY),
+    );
   }
 
   @override
@@ -808,8 +850,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
       final action = enabled ? 'set' : 'reset';
       final seq = 'CSI $mode ${enabled ? "h" : "l"} (mode $action)';
       debugConfig.onUnhandledSequence?.call(seq);
-      debugConfig.onLog?.call(
-          'warn', 'parser', 'Unhandled mode: $seq');
+      debugConfig.onLog?.call('warn', 'parser', 'Unhandled mode: $seq');
     }
   }
 
@@ -896,13 +937,18 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   }
 
   @override
+  void setSynchronizedOutputMode(bool enabled) {
+    _synchronizedOutputMode = enabled;
+  }
+
+  @override
   void setUnknownDecMode(int mode, bool enabled) {
     if (debugConfig.logUnhandledSequences) {
       final action = enabled ? 'set' : 'reset';
       final seq = 'CSI ? $mode ${enabled ? "h" : "l"} (DECSET/DECRST $action)';
       debugConfig.onUnhandledSequence?.call(seq);
-      debugConfig.onLog?.call(
-          'warn', 'parser', 'Unhandled DEC private mode: $seq');
+      debugConfig.onLog
+          ?.call('warn', 'parser', 'Unhandled DEC private mode: $seq');
     }
   }
 
